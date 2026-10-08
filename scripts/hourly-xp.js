@@ -340,42 +340,48 @@ function openRoster() {
 
 Hooks.on("getSceneControlButtons", (controls) => {
   if (!game.user?.isGM) return;
-  controls.push({
-    name: "hourly-xp",
-    title: "Hourly XP",
-    icon: "fas fa-star",
-    activeTool: "roster",
-    tools: [
-      {
-        name: "roster",
-        title: "Character roster",
-        icon: "fas fa-users",
+
+  const tools = [
+    { name: "roster", title: "Character roster", icon: "fas fa-users", action: () => openRoster() },
+    { name: "grantNow", title: "Grant XP now", icon: "fas fa-gift", action: () => grantNow() },
+    { name: "start", title: "Start timer", icon: "fas fa-play", action: () => startTimer() },
+    { name: "stop", title: "Stop timer", icon: "fas fa-stop", action: () => stopTimer() },
+  ];
+
+  if (Array.isArray(controls)) {
+    // Foundry v11–v12: controls is an array, tools is an array, callbacks are onClick.
+    controls.push({
+      name: "hourly-xp",
+      title: "Hourly XP",
+      icon: "fas fa-star",
+      activeTool: "roster",
+      tools: tools.map((t) => ({
+        name: t.name,
+        title: t.title,
+        icon: t.icon,
         button: true,
-        onClick: () => openRoster(),
-      },
-      {
-        name: "grantNow",
-        title: "Grant XP now",
-        icon: "fas fa-gift",
+        onClick: t.action,
+      })),
+    });
+  } else {
+    // Foundry v13+: controls and tools are records keyed by name, callbacks are onChange.
+    const toolRecord = {};
+    for (const t of tools) {
+      toolRecord[t.name] = {
+        name: t.name,
+        title: t.title,
+        icon: t.icon,
         button: true,
-        onClick: () => grantNow(),
-      },
-      {
-        name: "start",
-        title: "Start timer",
-        icon: "fas fa-play",
-        button: true,
-        onClick: () => startTimer(),
-      },
-      {
-        name: "stop",
-        title: "Stop timer",
-        icon: "fas fa-stop",
-        button: true,
-        onClick: () => stopTimer(),
-      },
-    ],
-  });
+        onChange: t.action,
+      };
+    }
+    controls["hourly-xp"] = {
+      name: "hourly-xp",
+      title: "Hourly XP",
+      icon: "fas fa-star",
+      tools: toolRecord,
+    };
+  }
 });
 
 /* ------------------------------------------------------------------ */
