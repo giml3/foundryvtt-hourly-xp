@@ -36,6 +36,17 @@ The roster lists every player-owned character with **Total XP**,
 - **Grant XP to all** awards the per-tick amount to every unlocked,
   rostered character — same as the toolbar's Grant XP now.
 
+### XP reasons and the system dialog
+
+Grants go through the WFRP4e system's native `awardExp`, so each grant
+writes a proper entry to the character's XP log — and the system's
+"Reason for XP change" dialog never pops up per character.
+
+- **Manual grants** (toolbar or roster buttons) ask for the reason
+  **once**, then apply it to everyone receiving XP.
+- **Timer ticks** never prompt; they log the **Default XP reason**
+  from module settings (default `"Hourly XP"`).
+
 Or run these in a script macro or the console (`F12`):
 
 ```js

@@ -7,11 +7,17 @@
  * If Foundry (or the GM's browser) restarts, restart the timer with the
  * macro API below or enable "Auto-start on ready" in module settings.
  *
+ * XP is awarded through the WFRP4e system's native awardExp, so the XP log
+ * gets a proper entry and the system's per-actor reason dialog never pops.
+ * Manual grants ask for the reason ONCE, then apply it to everyone;
+ * automatic timer ticks log the default reason silently.
+ *
  * Macro API (run as GM):
  *   game.modules.get("hourly-xp").api.start();     // start the timer
  *   game.modules.get("hourly-xp").api.stop();      // stop the timer
- *   game.modules.get("hourly-xp").api.grantNow();   // one manual grant now
+ *   game.modules.get("hourly-xp").api.grantNow();   // manual grant (one reason prompt)
  *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in?
+ *   game.modules.get("hourly-xp").api.roster();    // open the character roster
  *
  * A GM-only toolbar button (star icon, left toolbar) exposes the character
  * roster, Grant Now, Start, and Stop without touching the console.
@@ -93,27 +99,122 @@ function rosterActors() {
   return playerCharacters().filter((a) => !excluded[a.id]);
 }
 
-/** Grant `amount` XP to every unlocked, rostered player character. Returns count granted. */
-async function grantXpToAll(amount) {
+/** Default reason recorded in the XP log (setting; pre-fills the manual prompt). */
+function defaultReason() {
+  const r = String(game.settings.get(MODULE_ID, "defaultReason") ?? "");
+  return r.trim() || "Hourly XP";
+}
+
+/**
+ * Award XP through the WFRP4e system's native awardExp: writes the XP log
+ * entry with the given reason and does NOT pop the per-actor reason dialog.
+ * Falls back to a raw update when awardExp is unavailable.
+ */
+async function awardXp(actor, amount, reason) {
+  if (typeof actor.system?.awardExp === "function") {
+    // suppressChat: our own announceInChat summary covers the chat message.
+    await actor.system.awardExp(amount, reason, null, true);
+    return;
+  }
+  if (typeof actor.awardExp === "function") {
+    await actor.awardExp(amount, reason);
+    return;
+  }
+  const { key, total } = readXp(actor);
+  await actor.update({ [`system.details.experience.${key}`]: total + amount });
+}
+
+/** Unlocked, rostered player characters eligible for grants. */
+function unlockedRostered() {
   const locked = getLocked();
   const excluded = getExcluded();
-  const targets = playerCharacters().filter((a) => !locked[a.id] && !excluded[a.id]);
-  for (const actor of targets) {
-    const { key, total } = readXp(actor);
-    await actor.update({ [`system.details.experience.${key}`]: total + amount });
+  return playerCharacters().filter((a) => !locked[a.id] && !excluded[a.id]);
+}
+
+/** Grant `amount` XP to every unlocked, rostered player character. Returns count granted. */
+async function grantXpToAll(amount, reason) {
+  let count = 0;
+  for (const actor of unlockedRostered()) {
+    await awardXp(actor, amount, reason);
+    count++;
   }
-  return targets.length;
+  return count;
 }
 
 /** Grant `amount` XP to the given actor IDs (locked actors are skipped). Returns count granted. */
-async function grantXpToIds(amount, ids) {
+async function grantXpToIds(amount, ids, reason) {
   const wanted = new Set(ids);
-  const targets = playerCharacters().filter((a) => wanted.has(a.id) && !isLocked(a.id));
-  for (const actor of targets) {
-    const { key, total } = readXp(actor);
-    await actor.update({ [`system.details.experience.${key}`]: total + amount });
+  let count = 0;
+  for (const actor of playerCharacters()) {
+    if (wanted.has(actor.id) && !isLocked(actor.id)) {
+      await awardXp(actor, amount, reason);
+      count++;
+    }
   }
-  return targets.length;
+  return count;
+}
+
+/**
+ * Ask for the XP reason ONCE. Resolves to the reason string,
+ * or null if the GM cancels.
+ */
+function promptReason(amount, count) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (!done) {
+        done = true;
+        resolve(value);
+      }
+    };
+    const preset = defaultReason();
+    new Dialog({
+      title: "Hourly XP — Grant XP",
+      content:
+        `<form><p>Granting <strong>${amount} XP</strong> to ` +
+        `<strong>${count}</strong> character(s).</p>` +
+        `<div class="form-group"><label>Reason</label>` +
+        `<input type="text" name="reason" value="${escHtml(preset)}"></div></form>`,
+      buttons: {
+        grant: {
+          icon: '<i class="fas fa-gift"></i>',
+          label: "Grant",
+          callback: (html) => finish(html.find('[name="reason"]').val()?.trim() || preset),
+        },
+        cancel: {
+          icon: '<i class="fas fa-times"></i>',
+          label: "Cancel",
+          callback: () => finish(null),
+        },
+      },
+      default: "grant",
+      close: () => finish(null),
+    }).render(true);
+  });
+}
+
+/**
+ * Manual grant: a single reason prompt, then the award goes to every
+ * target. Returns count granted.
+ */
+async function manualGrant(targets, amount) {
+  if (!iAmActiveGM()) {
+    ui.notifications?.warn("Hourly XP: only the active GM can grant XP.");
+    return 0;
+  }
+  if (!targets.length) {
+    ui.notifications?.warn("Hourly XP: no characters to grant XP to.");
+    return 0;
+  }
+  const reason = await promptReason(amount, targets.length);
+  if (reason == null) return 0; // cancelled
+  let count = 0;
+  for (const actor of targets) {
+    await awardXp(actor, amount, reason);
+    count++;
+  }
+  ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
+  return count;
 }
 
 function announce(html) {
@@ -153,7 +254,8 @@ function startTimer() {
 async function onTick() {
   if (!iAmActiveGM()) return; // GM changed mid-session; stay quiet
   const amount = xpPerTick();
-  const count = await grantXpToAll(amount);
+  // Timer ticks never prompt: the default reason is logged silently.
+  const count = await grantXpToAll(amount, defaultReason());
   tickCount += 1;
   lastTickAt = Date.now();
   if (game.settings.get(MODULE_ID, "announceInChat")) {
@@ -166,14 +268,8 @@ async function onTick() {
 }
 
 async function grantNow() {
-  if (!iAmActiveGM()) {
-    ui.notifications?.warn("Hourly XP: only the active GM can grant XP.");
-    return 0;
-  }
-  const amount = xpPerTick();
-  const count = await grantXpToAll(amount);
-  ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
-  return count;
+  // Manual grant: one reason prompt, then award to everyone eligible.
+  return manualGrant(unlockedRostered(), xpPerTick());
 }
 
 function status() {
@@ -306,13 +402,13 @@ class XPRoster extends Application {
       }
     });
     html.find(".grant-selected").on("click", async () => {
-      const amount = xpPerTick();
-      const count = await grantXpToIds(amount, [...this.selected]);
-      ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
+      const ids = [...this.selected].filter((id) => !isLocked(id));
+      const targets = playerCharacters().filter((a) => ids.includes(a.id));
+      await manualGrant(targets, xpPerTick());
       this.render();
     });
     html.find(".grant-all").on("click", async () => {
-      await grantNow();
+      await manualGrant(unlockedRostered(), xpPerTick());
       this.render();
     });
     html.find(".restore").on("click", async () => {
@@ -405,6 +501,15 @@ Hooks.once("init", () => {
     config: true,
     type: Number,
     default: 100,
+  });
+
+  game.settings.register(MODULE_ID, "defaultReason", {
+    name: "Default XP reason",
+    hint: "Reason written to the XP log for automatic timer grants, and pre-filled in the manual grant prompt.",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "Hourly XP",
   });
 
   game.settings.register(MODULE_ID, "announceInChat", {
