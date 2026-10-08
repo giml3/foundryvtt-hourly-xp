@@ -13,8 +13,9 @@
  *   game.modules.get("hourly-xp").api.grantNow();   // one manual grant now
  *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in?
  *
- * A GM-only toolbar button (star icon, left toolbar) exposes Grant Now,
- * Start, and Stop without touching the console.
+ * A GM-only toolbar button (star icon, left toolbar) exposes the character
+ * roster, Grant Now, Start, and Stop without touching the console.
+ */
 
 const MODULE_ID = "hourly-xp";
 
@@ -39,21 +40,80 @@ function playerCharacters() {
   );
 }
 
-/** Read the actor's total XP, tolerating WFRP4e data-model variants. */
-function readTotalXp(actor) {
+/** Read an actor's XP, tolerating WFRP4e data-model variants. */
+function readXp(actor) {
   const xp = actor.system?.details?.experience ?? {};
-  const total = xp.total ?? xp.value ?? 0;
-  return { xp, total: Number(total) || 0, key: xp.total !== undefined ? "total" : "value" };
+  const total = Number(xp.total ?? xp.value ?? 0) || 0;
+  const spent = Number(xp.spent ?? 0) || 0;
+  return {
+    total,
+    spent,
+    available: total - spent,
+    key: xp.total !== undefined ? "total" : "value",
+  };
 }
 
-/** Grant `amount` XP to every player character. Returns count granted. */
+/** XP granted per tick, from module settings. */
+function xpPerTick() {
+  return Math.max(0, Number(game.settings.get(MODULE_ID, "xpPerTick")) || 0);
+}
+
+/** Actor IDs locked out of XP grants (world setting). */
+function getLocked() {
+  return game.settings.get(MODULE_ID, "lockedActors") || {};
+}
+
+/** Actor IDs removed from the roster (world setting). */
+function getExcluded() {
+  return game.settings.get(MODULE_ID, "excludedActors") || {};
+}
+
+function isLocked(id) {
+  return !!getLocked()[id];
+}
+
+async function toggleLock(id) {
+  const locked = { ...getLocked() };
+  if (locked[id]) delete locked[id];
+  else locked[id] = true;
+  await game.settings.set(MODULE_ID, "lockedActors", locked);
+}
+
+async function excludeActor(id) {
+  await game.settings.set(MODULE_ID, "excludedActors", { ...getExcluded(), [id]: true });
+}
+
+async function restoreExcluded() {
+  await game.settings.set(MODULE_ID, "excludedActors", {});
+}
+
+/** Player characters currently on the roster (not removed). */
+function rosterActors() {
+  const excluded = getExcluded();
+  return playerCharacters().filter((a) => !excluded[a.id]);
+}
+
+/** Grant `amount` XP to every unlocked, rostered player character. Returns count granted. */
 async function grantXpToAll(amount) {
-  const chars = playerCharacters();
-  for (const actor of chars) {
-    const { key, total } = readTotalXp(actor);
+  const locked = getLocked();
+  const excluded = getExcluded();
+  const targets = playerCharacters().filter((a) => !locked[a.id] && !excluded[a.id]);
+  for (const actor of targets) {
+    const { key, total } = readXp(actor);
     await actor.update({ [`system.details.experience.${key}`]: total + amount });
   }
-  return chars.length;
+  return targets.length;
+}
+
+/** Grant `amount` XP to the given actor IDs (locked actors are skipped). Returns count granted. */
+async function grantXpToIds(amount, ids) {
+  const wanted = new Set(ids);
+  const targets = playerCharacters().filter((a) => wanted.has(a.id) && !isLocked(a.id));
+  for (const actor of targets) {
+    const { key, total } = readXp(actor);
+    await actor.update({ [`system.details.experience.${key}`]: total + amount });
+  }
+  return targets.length;
 }
 
 function announce(html) {
@@ -92,7 +152,7 @@ function startTimer() {
 
 async function onTick() {
   if (!iAmActiveGM()) return; // GM changed mid-session; stay quiet
-  const amount = Math.max(0, Number(game.settings.get(MODULE_ID, "xpPerTick")) || 0);
+  const amount = xpPerTick();
   const count = await grantXpToAll(amount);
   tickCount += 1;
   lastTickAt = Date.now();
@@ -110,7 +170,7 @@ async function grantNow() {
     ui.notifications?.warn("Hourly XP: only the active GM can grant XP.");
     return 0;
   }
-  const amount = Math.max(0, Number(game.settings.get(MODULE_ID, "xpPerTick")) || 0);
+  const amount = xpPerTick();
   const count = await grantXpToAll(amount);
   ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
   return count;
@@ -125,6 +185,156 @@ function status() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Character roster window (GM only)                                    */
+/* ------------------------------------------------------------------ */
+
+function escHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c]));
+}
+
+class XPRoster extends Application {
+  constructor() {
+    super();
+    this.selected = new Set();
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "hourly-xp-roster",
+      title: "Hourly XP — Character Roster",
+      width: 640,
+      height: 480,
+      resizable: true,
+    });
+  }
+
+  getData() {
+    const locked = getLocked();
+    const actors = rosterActors();
+    const ids = new Set(actors.map((a) => a.id));
+    for (const id of [...this.selected]) if (!ids.has(id)) this.selected.delete(id);
+    return {
+      rows: actors.map((a) => {
+        const { total, spent, available } = readXp(a);
+        return {
+          id: a.id,
+          name: a.name,
+          img: a.img,
+          total,
+          spent,
+          available,
+          locked: !!locked[a.id],
+          selected: this.selected.has(a.id),
+        };
+      }),
+    };
+  }
+
+  async _renderInner(data) {
+    const body = data.rows.length
+      ? data.rows
+          .map(
+            (r) => `
+        <tr data-actor-id="${r.id}">
+          <td class="c"><input type="checkbox" class="sel" ${r.selected ? "checked" : ""} ${
+              r.locked ? "disabled" : ""
+            }></td>
+          <td><img src="${r.img}" width="28" height="28" style="vertical-align:middle"> ${escHtml(r.name)}${
+              r.locked ? ' <i class="fas fa-lock" title="Locked — skipped by grants"></i>' : ""
+            }</td>
+          <td class="n">${r.total}</td>
+          <td class="n">${r.spent}</td>
+          <td class="n">${r.available}</td>
+          <td class="c"><button type="button" class="lock-btn" title="${
+            r.locked ? "Unlock" : "Lock"
+          }"><i class="fas fa-${r.locked ? "lock-open" : "lock"}"></i></button></td>
+          <td class="c"><button type="button" class="remove-btn" title="Remove from roster"><i class="fas fa-times"></i></button></td>
+        </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="7" class="c">No player characters found.</td></tr>`;
+    return $(`
+      <div class="hourly-xp-roster">
+        <style>
+          .hourly-xp-roster table { width: 100%; border-collapse: collapse; }
+          .hourly-xp-roster th, .hourly-xp-roster td { padding: 4px 6px; border-bottom: 1px solid #555; text-align: left; }
+          .hourly-xp-roster td.n, .hourly-xp-roster th.n { text-align: right; font-variant-numeric: tabular-nums; }
+          .hourly-xp-roster td.c, .hourly-xp-roster th.c { text-align: center; }
+          .hourly-xp-roster .actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+          .hourly-xp-roster .hint { opacity: 0.75; font-size: 0.85em; }
+        </style>
+        <table>
+          <thead><tr><th class="c">Select</th><th>Character</th><th class="n">Total XP</th><th class="n">Spent XP</th><th class="n">Available</th><th class="c">Lock</th><th class="c">Remove</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+        <div class="actions">
+          <button type="button" class="grant-selected"><i class="fas fa-gift"></i> Grant XP to selected</button>
+          <button type="button" class="grant-all"><i class="fas fa-users"></i> Grant XP to all</button>
+          <button type="button" class="restore"><i class="fas fa-undo"></i> Restore removed</button>
+        </div>
+        <p class="hint">Locked characters are skipped by the timer and manual grants. Removed characters leave the roster and are skipped too — restore them here.</p>
+      </div>`);
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    const idOf = (el) => el.closest("tr")?.dataset.actorId;
+    html.find("input.sel").on("change", (ev) => {
+      const id = idOf(ev.currentTarget);
+      if (!id) return;
+      if (ev.currentTarget.checked) this.selected.add(id);
+      else this.selected.delete(id);
+    });
+    html.find(".lock-btn").on("click", async (ev) => {
+      const id = idOf(ev.currentTarget);
+      if (id) {
+        await toggleLock(id);
+        this.render();
+      }
+    });
+    html.find(".remove-btn").on("click", async (ev) => {
+      const id = idOf(ev.currentTarget);
+      if (id) {
+        await excludeActor(id);
+        this.render();
+      }
+    });
+    html.find(".grant-selected").on("click", async () => {
+      const amount = xpPerTick();
+      const count = await grantXpToIds(amount, [...this.selected]);
+      ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
+      this.render();
+    });
+    html.find(".grant-all").on("click", async () => {
+      await grantNow();
+      this.render();
+    });
+    html.find(".restore").on("click", async () => {
+      await restoreExcluded();
+      this.render();
+    });
+  }
+}
+
+let rosterApp = null;
+
+/** Open the GM's character roster window. */
+function openRoster() {
+  if (!game.user?.isGM) {
+    ui.notifications?.warn("Hourly XP: only the GM can open the roster.");
+    return;
+  }
+  if (!rosterApp) rosterApp = new XPRoster();
+  rosterApp.render(true);
+}
+
+/* ------------------------------------------------------------------ */
 /* Toolbar button (GM only)                                             */
 /* ------------------------------------------------------------------ */
 
@@ -134,8 +344,15 @@ Hooks.on("getSceneControlButtons", (controls) => {
     name: "hourly-xp",
     title: "Hourly XP",
     icon: "fas fa-star",
-    activeTool: "grantNow",
+    activeTool: "roster",
     tools: [
+      {
+        name: "roster",
+        title: "Character roster",
+        icon: "fas fa-users",
+        button: true,
+        onClick: () => openRoster(),
+      },
       {
         name: "grantNow",
         title: "Grant XP now",
@@ -202,7 +419,21 @@ Hooks.once("init", () => {
     default: false,
   });
 
-  const api = { start: startTimer, stop: () => stopTimer(), grantNow, status };
+  game.settings.register(MODULE_ID, "lockedActors", {
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {},
+  });
+
+  game.settings.register(MODULE_ID, "excludedActors", {
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {},
+  });
+
+  const api = { start: startTimer, stop: () => stopTimer(), grantNow, status, roster: openRoster };
   const mod = game.modules.get(MODULE_ID);
   if (mod) mod.api = api;
   // Also expose globally for macro convenience.
@@ -212,3 +443,10 @@ Hooks.once("init", () => {
 Hooks.once("ready", () => {
   if (game.settings.get(MODULE_ID, "autoStart")) startTimer();
 });
+
+// Keep the open roster fresh when actors change.
+for (const hook of ["createActor", "updateActor", "deleteActor"]) {
+  Hooks.on(hook, () => {
+    if (rosterApp?.rendered) rosterApp.render();
+  });
+}

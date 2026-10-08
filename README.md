@@ -19,8 +19,22 @@ The timer runs **only on the active GM's client**, so XP is never
 double-granted, even with multiple GMs online.
 
 **Toolbar button (GM only):** a star icon in the left scene-controls
-toolbar gives you **Grant XP now**, **Start timer**, and **Stop timer**
-with one click — no console needed.
+toolbar gives you **Character roster**, **Grant XP now**, **Start timer**,
+and **Stop timer** with one click — no console needed.
+
+### Character roster
+
+The roster lists every player-owned character with **Total XP**,
+**Spent XP**, and **Available XP** (total minus spent).
+
+- **Select** characters with the checkboxes, then **Grant XP to selected**
+  to award the per-tick amount to just those characters.
+- **Lock** a character to skip it in every grant (timer and manual).
+  Locked rows can't be selected.
+- **Remove** takes a character off the roster entirely (also skipped by
+  grants). **Restore removed** brings everyone back.
+- **Grant XP to all** awards the per-tick amount to every unlocked,
+  rostered character — same as the toolbar's Grant XP now.
 
 Or run these in a script macro or the console (`F12`):
 
@@ -29,6 +43,7 @@ HourlyXP.start();      // start the timer
 HourlyXP.stop();       // stop the timer
 HourlyXP.grantNow();   // one manual grant right now
 HourlyXP.status();     // { running, ticks, nextTickInSeconds }
+HourlyXP.roster();     // open the character roster window
 ```
 
 (`game.modules.get("hourly-xp").api` exposes the same four functions.)
@@ -36,7 +51,8 @@ HourlyXP.status();     // { running, ticks, nextTickInSeconds }
 ## Notes
 
 - Grants go to actors of type `character` that have a player owner.
-  Token-copies are skipped, NPCs are skipped.
+  Token-copies are skipped, NPCs are skipped. Locked and removed
+  characters are skipped too.
 - Works with the WFRP4e experience model (`details.experience.total`,
   falling back to `value` on older data).
 - The timer lives in the GM's browser session. If Foundry or the browser
