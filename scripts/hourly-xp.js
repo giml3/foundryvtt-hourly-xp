@@ -12,7 +12,9 @@
  *   game.modules.get("hourly-xp").api.stop();      // stop the timer
  *   game.modules.get("hourly-xp").api.grantNow();   // one manual grant now
  *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in?
- */
+ *
+ * A GM-only toolbar button (star icon, left toolbar) exposes Grant Now,
+ * Start, and Stop without touching the console.
 
 const MODULE_ID = "hourly-xp";
 
@@ -121,6 +123,43 @@ function status() {
     : null;
   return { running: !!xpTimer, ticks: tickCount, nextTickInSeconds: nextIn };
 }
+
+/* ------------------------------------------------------------------ */
+/* Toolbar button (GM only)                                             */
+/* ------------------------------------------------------------------ */
+
+Hooks.on("getSceneControlButtons", (controls) => {
+  if (!game.user?.isGM) return;
+  controls.push({
+    name: "hourly-xp",
+    title: "Hourly XP",
+    icon: "fas fa-star",
+    activeTool: "grantNow",
+    tools: [
+      {
+        name: "grantNow",
+        title: "Grant XP now",
+        icon: "fas fa-gift",
+        button: true,
+        onClick: () => grantNow(),
+      },
+      {
+        name: "start",
+        title: "Start timer",
+        icon: "fas fa-play",
+        button: true,
+        onClick: () => startTimer(),
+      },
+      {
+        name: "stop",
+        title: "Stop timer",
+        icon: "fas fa-stop",
+        button: true,
+        onClick: () => stopTimer(),
+      },
+    ],
+  });
+});
 
 /* ------------------------------------------------------------------ */
 /* Registration                                                        */

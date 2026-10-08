@@ -18,7 +18,11 @@ per hour so the party climbs toward tier 4 over the session).
 The timer runs **only on the active GM's client**, so XP is never
 double-granted, even with multiple GMs online.
 
-As GM, run these in a script macro or the console (`F12`):
+**Toolbar button (GM only):** a star icon in the left scene-controls
+toolbar gives you **Grant XP now**, **Start timer**, and **Stop timer**
+with one click — no console needed.
+
+Or run these in a script macro or the console (`F12`):
 
 ```js
 HourlyXP.start();      // start the timer
