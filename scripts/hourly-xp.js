@@ -18,12 +18,14 @@
  * The same ticker facts also live in a small always-visible box pinned
  * to the top of the players panel, just above the latency/FPS readout.
  *
- * Every timer tick is a little ceremony: a radiant golden aura flares
- * around each granted character's tokens and chat proclaims one of a
- * rotating pool of Sigmar's blessings. The Donation FX panel (toolbar or
- * macro) fires one-click visual effects for every item on the charity
- * donation-incentives list — player boons, GM chaos, and milestones —
- * including a real 4-hour DOUBLE XP multiplier.
+ * Every timer tick is a little ceremony: a LARGE proclamation fades in
+ * at the center of the screen — "Sigmar's Blessing" plus one of a
+ * rotating pool of Sigmar's blessings — then fades away. The Donation FX
+ * panel (toolbar or macro) fires one-click center-screen banners for
+ * every item on the charity donation-incentives list — player boons, GM
+ * chaos, and milestones — including a real 4-hour DOUBLE XP multiplier.
+ * Every FX fired is logged with time, label, price, and target, plus a
+ * running donations total.
  *
  * Macro API (run as GM):
  *   game.modules.get("hourly-xp").api.start();     // start the timer
@@ -276,91 +278,58 @@ function xpMultiplier() {
   return Date.now() < doubleXpUntil ? 2 : 1;
 }
 
-/** Cached radial-glow textures, keyed by color pair. */
-const _texCache = {};
+/* ------------------------------------------------------------------ */
+/* Celebration banner — LARGE fading text, center of screen             */
+/*                                                                     */
+/* Replaces the old token auras: a big proclamation fades in mid-screen */
+/* for each donation FX and each Sigmar blessing, holds, then fades.    */
+/* Vanilla DOM, no modules needed, never blocks clicks.                 */
+/* ------------------------------------------------------------------ */
 
-function glowTexture(inner, mid) {
-  const key = `${inner}|${mid}`;
-  if (_texCache[key]) return _texCache[key];
-  try {
-    const c = document.createElement("canvas");
-    c.width = c.height = 256;
-    const ctx = c.getContext("2d");
-    const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
-    g.addColorStop(0, `rgba(${inner},0.95)`);
-    g.addColorStop(0.45, `rgba(${mid},0.5)`);
-    g.addColorStop(1, `rgba(${mid},0)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 256, 256);
-    _texCache[key] = c.toDataURL();
-    return _texCache[key];
-  } catch (e) {
-    return null;
-  }
+/** Banner accent color per FX category. */
+const FX_BANNER_COLORS = { Player: "#ffd766", Chaos: "#e08cff", Milestone: "#fff3c4" };
+
+function ensureBannerCss() {
+  if (typeof document === "undefined" || document.getElementById("hourly-xp-banner-css")) return;
+  const st = document.createElement("style");
+  st.id = "hourly-xp-banner-css";
+  st.textContent =
+    "#hourly-xp-banner{position:fixed;left:50%;top:36%;transform:translate(-50%,-50%) scale(.92);" +
+    "text-align:center;z-index:1000;pointer-events:none;opacity:0;max-width:90vw;" +
+    "transition:opacity .45s ease,transform .45s ease}" +
+    "#hourly-xp-banner.hx-show{opacity:1;transform:translate(-50%,-50%) scale(1)}" +
+    "#hourly-xp-banner .hx-b-title{font-size:64px;font-weight:800;letter-spacing:2px;line-height:1.1;" +
+    "text-shadow:0 0 28px currentColor,0 2px 8px #000}" +
+    "#hourly-xp-banner .hx-b-sub{font-size:24px;color:#e8e0c8;text-shadow:0 2px 6px #000;margin-top:10px;line-height:1.3}";
+  document.head.appendChild(st);
 }
 
-/** How long celebration auras linger (ms). */
-const FX_DURATION_MS = 7500;
-
 /**
- * Flare a radiant aura under each affected token plus a brief golden tint
- * pulse on the token itself. `actors` are granted actors; def carries the
- * FX colors/size. Skips cleanly with no canvas or when disabled.
+ * Flash a large banner: `title` big, optional `subtitle` beneath.
+ * Re-triggers cleanly if fired while visible; auto-hides after ~4s.
  */
-async function radiantAura(actors, def) {
-  if (!game.settings.get(MODULE_ID, "celebrationFx")) return;
-  const tex = glowTexture(def.inner, def.mid);
-  const size = def.size || 2.4;
-  const dur = FX_DURATION_MS;
-  const jobs = [];
-  for (const actor of actors) {
-    const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens() : [];
-    for (const token of tokens) {
-      jobs.push(
-        (async () => {
-          try {
-            const doc = token.document;
-            const scene = doc?.parent;
-            // Token x/y is the TOP-LEFT corner; center the aura on the token.
-            const gridSize = scene?.grid?.size ?? 100;
-            const tw = token.w ?? (doc?.width ?? 1) * gridSize;
-            const th = token.h ?? (doc?.height ?? 1) * gridSize;
-            const tx = token.x ?? doc?.x ?? 0;
-            const ty = token.y ?? doc?.y ?? 0;
-            let tile = null;
-            if (tex && scene?.createEmbeddedDocuments) {
-              const w = tw * size;
-              const h = th * size;
-              const docs = await scene.createEmbeddedDocuments("Tile", [
-                {
-                  "texture.src": tex,
-                  x: tx + tw / 2 - w / 2,
-                  y: ty + th / 2 - h / 2,
-                  width: w,
-                  height: h,
-                  alpha: 0.95,
-                },
-              ]);
-              tile = docs?.[0] ?? null;
-            }
-            const origTint = doc?.texture?.tint;
-            try {
-              await doc?.update?.({ "texture.tint": 0xffd766 });
-            } catch (e) { /* tint unsupported, aura tile is enough */ }
-            setTimeout(async () => {
-              try {
-                await doc?.update?.({ "texture.tint": origTint ?? null });
-              } catch (e) {}
-              try {
-                await tile?.delete();
-              } catch (e) {}
-            }, dur);
-          } catch (e) { /* never let FX break a grant */ }
-        })()
-      );
+function showBanner(title, subtitle, color) {
+  try {
+    if (typeof document === "undefined") return;
+    if (!game.settings.get(MODULE_ID, "celebrationFx")) return;
+    ensureBannerCss();
+    let el = document.getElementById("hourly-xp-banner");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "hourly-xp-banner";
+      document.body.appendChild(el);
     }
+    el.innerHTML =
+      `<div class="hx-b-title" style="color:${escHtml(color || "#ffd766")}">${escHtml(title)}</div>` +
+      (subtitle ? `<div class="hx-b-sub">${escHtml(subtitle)}</div>` : "");
+    el.classList.remove("hx-show");
+    void el.offsetWidth; // restart the fade-in transition
+    el.classList.add("hx-show");
+    clearTimeout(el._hideT);
+    el._hideT = setTimeout(() => el.classList.remove("hx-show"), 4000);
+  } catch (e) {
+    /* never let the banner break a grant */
   }
-  await Promise.allSettled(jobs);
 }
 
 /**
@@ -395,7 +364,7 @@ function resolveFxTargets(target) {
 }
 
 /**
- * Play a donation FX: radiant aura on the targets + a chat proclamation.
+ * Play a donation FX: big center-screen banner + a chat proclamation.
  * `target` is optional (name, id, actor, or array; blank = whole party).
  */
 async function playFx(key, target) {
@@ -407,14 +376,16 @@ async function playFx(key, target) {
   const { actors, names } = resolveFxTargets(target);
   if (def.run) await def.run(actors);
   await logFx(key, def, names);
-  await radiantAura(actors, def);
+  showBanner(def.label, def.message(names), FX_BANNER_COLORS[def.cat] || "#ffd766");
   if (def.message) announce(`<p><strong>${escHtml(def.label)}</strong> — ${escHtml(def.message(names))}</p>`);
   ui.notifications?.info(`Hourly XP: ${def.label} ($${def.price}).`);
   return true;
 }
 
-/** The tick blessing: golden aura on every granted actor + a random Sigmar proclamation. */
-async function blessTick(actors, amount, count, tickNum, minutes) {  await radiantAura(actors, { inner: "255,244,200", mid: "255,205,95", size: 2.8 });
+/** The tick blessing: big banner + a random Sigmar proclamation in chat. */
+async function blessTick(amount, count, tickNum, minutes) {
+  const blessing = randomBlessing();
+  showBanner("Sigmar's Blessing", blessing, "#ffd766");
   if (game.settings.get(MODULE_ID, "announceInChat")) {
     const mult = xpMultiplier();
     announce(
@@ -435,6 +406,25 @@ async function blessTick(actors, amount, count, tickNum, minutes) {  await radia
 /* latency/FPS readout — no need to open the roster mid-session.        */
 /* ------------------------------------------------------------------ */
 
+/** Compact number: 950 -> "950", 1200 -> "1.2k", 12500 -> "12k". */
+function fmtNum(n) {
+  n = Number(n) || 0;
+  if (n >= 10000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return String(n);
+}
+
+/** Compact countdown for the narrow HUD: "1h 5m" / "59m" / "45s" / "—". */
+function fmtCountdownShort(sec) {
+  if (sec == null) return "—";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
 /** Shared ticker facts for the roster status bar and the players HUD box. */
 function tickerData() {
   const totals = rosterActors().map((a) => readXp(a).total);
@@ -452,20 +442,23 @@ function tickerData() {
       doubleXpUntil > Date.now()
         ? `DOUBLE XP — ${fmtCountdown(Math.round((doubleXpUntil - Date.now()) / 1000))} left`
         : null,
+    doubleXpSecs: doubleXpUntil > Date.now() ? Math.round((doubleXpUntil - Date.now()) / 1000) : null,
   };
 }
 
 function tickerBoxHtml() {
   const d = tickerData();
   return (
-    `<div class="hx-row"><span>Next drop</span><b>${d.timerRunning ? escHtml(d.nextDrop) : "—"}</b></div>` +
+    `<div class="hx-row"><span>Next drop</span><b>${d.timerRunning ? escHtml(fmtCountdownShort(nextTickInSeconds())) : "—"}</b></div>` +
     (d.timerRunning
       ? ""
-      : `<div class="hx-row hx-note"><span>timer stopped</span></div>`) +
-    `<div class="hx-row"><span>Session</span><b>${d.sessionGranted} XP</b></div>` +
-    `<div class="hx-row"><span>All-time</span><b>${d.totalGranted} XP</b></div>` +
+      : `<div class="hx-row hx-note"><span>stopped</span></div>`) +
+    `<div class="hx-row"><span>Session</span><b>${fmtNum(d.sessionGranted)} XP</b></div>` +
+    `<div class="hx-row"><span>All-time</span><b>${fmtNum(d.totalGranted)} XP</b></div>` +
     `<div class="hx-row"><span>Party</span><b>${escHtml(d.avgTier)}</b></div>` +
-    (d.doubleXp ? `<div class="hx-row"><b class="hx-2x">${escHtml(d.doubleXp)}</b></div>` : "")
+    (d.doubleXpSecs != null
+      ? `<div class="hx-row"><b class="hx-2x">2X · ${escHtml(fmtCountdownShort(d.doubleXpSecs))}</b></div>`
+      : "")
   );
 }
 
@@ -474,14 +467,14 @@ function ensureTickerCss() {
   const st = document.createElement("style");
   st.id = "hourly-xp-ticker-css";
   st.textContent =
-    "#hourly-xp-ticker{margin:0 0 6px;padding:6px 8px;background:rgba(0,0,0,.6);" +
-    "border:1px solid #7a6a3f;border-radius:4px;font-size:12px;color:#e8e0c8;overflow:hidden}" +
+    "#hourly-xp-ticker{margin:0 0 6px;padding:5px 7px;background:rgba(0,0,0,.6);" +
+    "border:1px solid #7a6a3f;border-radius:4px;font-size:11px;color:#e8e0c8;overflow:hidden}" +
     "#hourly-xp-ticker .hx-row{display:flex;justify-content:space-between;align-items:baseline;" +
-    "gap:10px;padding:1px 0;white-space:nowrap}" +
-    "#hourly-xp-ticker .hx-row span{opacity:.72}" +
+    "gap:8px;padding:1px 0;white-space:nowrap;min-width:0}" +
+    "#hourly-xp-ticker .hx-row span{opacity:.72;flex:none}" +
     "#hourly-xp-ticker .hx-note span{opacity:.55;font-style:italic}" +
-    "#hourly-xp-ticker b{color:#ffd766;font-variant-numeric:tabular-nums}" +
-    "#hourly-xp-ticker .hx-2x{color:#ffe9a8;font-size:11px}";
+    "#hourly-xp-ticker b{color:#ffd766;font-variant-numeric:tabular-nums;flex:none}" +
+    "#hourly-xp-ticker .hx-2x{color:#ffe9a8}";
   document.head.appendChild(st);
 }
 
@@ -808,7 +801,7 @@ async function onTick() {
   await recordGrant(amount, count);
   if (count > 0) {
     const minutes = game.settings.get(MODULE_ID, "intervalMinutes");
-    await blessTick(targets, amount, count, tickCount, minutes);
+    await blessTick(amount, count, tickCount, minutes);
   } else if (game.settings.get(MODULE_ID, "announceInChat")) {
     const minutes = game.settings.get(MODULE_ID, "intervalMinutes");
     announce(
@@ -1185,7 +1178,7 @@ Hooks.once("init", () => {
 
   game.settings.register(MODULE_ID, "celebrationFx", {
     name: "Celebration visuals",
-    hint: "Flare a radiant aura around each character's tokens (plus a brief golden tint pulse) when XP drops and donation FX fire. No extra modules needed.",
+    hint: "Show the big center-screen banner for donation FX and Sigmar blessings. No extra modules needed.",
     scope: "world",
     config: true,
     type: Boolean,
