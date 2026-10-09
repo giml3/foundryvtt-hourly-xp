@@ -16,12 +16,22 @@
  * the next XP drop, XP granted this session vs. all-time, and a rough
  * power tier per character (plus the party average) based on total XP.
  *
+ * Every timer tick is a little ceremony: a radiant golden aura flares
+ * around each granted character's tokens and chat proclaims one of a
+ * rotating pool of Sigmar's blessings. The Donation FX panel (toolbar or
+ * macro) fires one-click visual effects for every item on the charity
+ * donation-incentives list — player boons, GM chaos, and milestones —
+ * including a real 4-hour DOUBLE XP multiplier.
+ *
  * Macro API (run as GM):
  *   game.modules.get("hourly-xp").api.start();     // start the timer
  *   game.modules.get("hourly-xp").api.stop();      // stop the timer
  *   game.modules.get("hourly-xp").api.grantNow();   // manual grant (one reason prompt)
- *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in? granted?
+ *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in? granted? 2x?
  *   game.modules.get("hourly-xp").api.roster();    // open the character roster
+ *   game.modules.get("hourly-xp").api.fx("crit", "Zelp"); // donation FX, optional target name
+ *   game.modules.get("hourly-xp").api.fxList();    // all FX keys, labels, prices
+ *   game.modules.get("hourly-xp").api.fxPanel();   // open the Donation FX panel
  *
  * A GM-only toolbar button (star icon, left toolbar) exposes the character
  * roster, Grant Now, Start, and Stop without touching the console.
@@ -162,6 +172,291 @@ function fmtCountdown(sec) {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Blessings & donation FX (visuals + flavor)                           */
+/*                                                                     */
+/* All visuals are vanilla Foundry: a radial-glow tile under each       */
+/* affected token plus a brief golden tint pulse. No extra modules      */
+/* needed; everything degrades gracefully with no canvas.               */
+/* ------------------------------------------------------------------ */
+
+/** Rotating pool of Sigmar's blessings, one proclaimed per timer tick. */
+const BLESSINGS = [
+  "Sigmar's blessing has been bestowed — you feel empowered!",
+  "The light of the Twin-Tailed Comet falls upon you. Sigmar watches.",
+  "By Sigmar's hammer, you grow stronger!",
+  "Sigmar smiles upon the faithful — feel His strength surge through you!",
+  "Sigmar, the God-King, turns His gaze to you. Power courses through your veins!",
+  "A twin-tailed comet streaks across the heavens. Sigmar provides!",
+  "Heldenhammer's blessing — Sigmar's own — settles upon your shoulders.",
+  "Sigmar's wrath fuels you; His mercy sustains you. You feel empowered!",
+];
+
+function randomBlessing() {
+  return BLESSINGS[Math.floor(Math.random() * BLESSINGS.length)];
+}
+
+/**
+ * Donation-incentives FX table. `message` receives the target name(s).
+ * Colors are "r,g,b" for the radial glow; size is in token-widths.
+ */
+const FX = {
+  // -- Player incentives --
+  reroll:      { cat: "Player", price: 5,  label: "Second Chance",     inner: "255,240,190", mid: "255,200,90",  size: 2.2, message: (t) => `Sigmar grants ${t} a second chance — reroll it!` },
+  crit:        { cat: "Player", price: 10, label: "Blessed Crit",      inner: "255,255,230", mid: "255,215,110", size: 2.6, message: (t) => `Sigmar guides the blow — a critical strike for ${t}!` },
+  extraAction: { cat: "Player", price: 15, label: "Divine Swiftness",  inner: "255,235,170", mid: "255,195,80",  size: 2.4, message: (t) => `${t} move with divine swiftness — an extra action!` },
+  autoSuccess: { cat: "Player", price: 20, label: "Sigmar's Hand",     inner: "255,255,240", mid: "255,220,120", size: 2.8, message: (t) => `Sigmar's own hand steadies ${t} — automatic success!` },
+  fatePoint:   { cat: "Player", price: 25, label: "Cheat Morr",        inner: "255,240,200", mid: "240,200,100", size: 2.6, message: (t) => `${t} snatch a Fate point back from Morr's grasp!` },
+  blessParty:  { cat: "Player", price: 30, label: "Blessing of Sigmar",inner: "255,245,200", mid: "255,205,95",  size: 3.2, message: (t) => `The party is blessed by Sigmar!` },
+  // -- GM chaos --
+  intrusion:   { cat: "Chaos", price: 10, label: "GM Intrusion",       inner: "200,140,255", mid: "120,60,180",  size: 2.4, message: (t) => `The Ruinous Powers stir — a GM intrusion upon ${t}!` },
+  fumbleCurse: { cat: "Chaos", price: 15, label: "Fumble Curse",       inner: "255,120,120", mid: "170,40,40",   size: 2.6, message: (t) => `Tzeentch cackles — ${t} are cursed to fumble!` },
+  complication:{ cat: "Chaos", price: 20, label: "Cruel Complication", inner: "255,160,100", mid: "180,70,30",   size: 2.6, message: (t) => `Nothing goes to plan — a cruel complication strikes ${t}!` },
+  betrayal:    { cat: "Chaos", price: 25, label: "Whisper of Betrayal",inner: "190,130,255", mid: "110,50,170",  size: 2.4, message: (t) => `A dark whisper curls around ${t}...` },
+  ruinPlan:    { cat: "Chaos", price: 30, label: "Ruin the Plan",       inner: "210,150,255", mid: "100,40,160",  size: 3.0, message: (t) => `The GM's ruin-a-plan token is spent. Sigmar preserve ${t}...` },
+  // -- Milestones --
+  secretReveal:{ cat: "Milestone", price: 250,  label: "Hidden Truth", inner: "255,244,200", mid: "230,200,120", size: 2.4, message: () => `A hidden campaign secret is revealed!` },
+  bonusBoss:   { cat: "Milestone", price: 500,  label: "Bonus Boss",    inner: "255,130,130", mid: "170,40,40",   size: 3.4, message: () => `A Chaos Spawn crashes into the fray!` },
+  gmDice:      { cat: "Milestone", price: 750,  label: "Seize the Dice",inner: "255,240,190", mid: "255,200,90",  size: 2.6, message: () => `The players seize the GM's dice for an entire act!` },
+  chaosHour:   { cat: "Milestone", price: 1000, label: "CHAOS HOUR",    inner: "255,150,150", mid: "140,50,150",  size: 3.6, message: () => `CHAOS HOUR begins! Every hour, a manifestation!` },
+  magicItem:   { cat: "Milestone", price: 1250, label: "Chat Forges",   inner: "255,242,200", mid: "240,200,110", size: 2.8, message: () => `Chat designs a magic item — the GM stats it on the spot!` },
+  doubleXp:    { cat: "Milestone", price: 1500, label: "DOUBLE XP",      inner: "255,250,210", mid: "255,210,100", size: 3.4, message: () => `DOUBLE XP for the next 4 hours!`,
+                 run: async () => { doubleXpUntil = Date.now() + 4 * 3600 * 1000; } },
+  fateRefresh: { cat: "Milestone", price: 1750, label: "Fate Restored", inner: "255,240,200", mid: "240,200,110", size: 3.0, message: () => `The party's Fate points are restored!` },
+  finaleWish:  { cat: "Milestone", price: 2000, label: "Finale Wish",   inner: "255,255,245", mid: "255,225,130", size: 4.0, message: () => `The $2,000 finale wish is granted!` },
+};
+
+/** List every FX key with its label, category, and price (for macros/panels). */
+function fxList() {
+  return Object.entries(FX).map(([key, d]) => ({ key, label: d.label, cat: d.cat, price: d.price }));
+}
+
+/** DOUBLE XP state: timestamp (ms) until which ticks grant double. */
+let doubleXpUntil = 0;
+
+function xpMultiplier() {
+  return Date.now() < doubleXpUntil ? 2 : 1;
+}
+
+/** Cached radial-glow textures, keyed by color pair. */
+const _texCache = {};
+
+function glowTexture(inner, mid) {
+  const key = `${inner}|${mid}`;
+  if (_texCache[key]) return _texCache[key];
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const ctx = c.getContext("2d");
+    const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
+    g.addColorStop(0, `rgba(${inner},0.95)`);
+    g.addColorStop(0.45, `rgba(${mid},0.5)`);
+    g.addColorStop(1, `rgba(${mid},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 256, 256);
+    _texCache[key] = c.toDataURL();
+    return _texCache[key];
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Flare a radiant aura under each affected token plus a brief golden tint
+ * pulse on the token itself. `actors` are granted actors; def carries the
+ * FX colors/size. Skips cleanly with no canvas or when disabled.
+ */
+async function radiantAura(actors, def) {
+  if (!game.settings.get(MODULE_ID, "celebrationFx")) return;
+  const tex = glowTexture(def.inner, def.mid);
+  const size = def.size || 2.4;
+  const dur = 2500;
+  const jobs = [];
+  for (const actor of actors) {
+    const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens() : [];
+    for (const token of tokens) {
+      jobs.push(
+        (async () => {
+          try {
+            const doc = token.document;
+            const scene = doc?.parent;
+            const tw = token.w ?? doc?.width ?? 100;
+            const th = token.h ?? doc?.height ?? 100;
+            const tx = token.x ?? doc?.x ?? 0;
+            const ty = token.y ?? doc?.y ?? 0;
+            let tile = null;
+            if (tex && scene?.createEmbeddedDocuments) {
+              const w = tw * size;
+              const h = th * size;
+              const docs = await scene.createEmbeddedDocuments("Tile", [
+                { "texture.src": tex, x: tx - w / 2, y: ty - h / 2, width: w, height: h, alpha: 0.95 },
+              ]);
+              tile = docs?.[0] ?? null;
+            }
+            const origTint = doc?.texture?.tint;
+            try {
+              await doc?.update?.({ "texture.tint": 0xffd766 });
+            } catch (e) { /* tint unsupported, aura tile is enough */ }
+            setTimeout(async () => {
+              try {
+                await doc?.update?.({ "texture.tint": origTint ?? null });
+              } catch (e) {}
+              try {
+                await tile?.delete();
+              } catch (e) {}
+            }, dur);
+          } catch (e) { /* never let FX break a grant */ }
+        })()
+      );
+    }
+  }
+  await Promise.allSettled(jobs);
+}
+
+/**
+ * Resolve an FX target: actor name (case-insensitive, partial ok), actor id,
+ * an actor, or an array of those. Blank/undefined targets the whole
+ * unlocked roster. Returns { actors, names } for messaging.
+ */
+function resolveFxTargets(target) {
+  const pool = unlockedRostered();
+  if (target == null || (typeof target === "string" && !target.trim())) {
+    return { actors: pool, names: "the party" };
+  }
+  const wants = (Array.isArray(target) ? target : [target]).map((t) =>
+    typeof t === "string" ? t.trim().toLowerCase() : t
+  );
+  const actors = [];
+  for (const w of wants) {
+    if (typeof w !== "string") {
+      if (w && pool.includes(w)) actors.push(w);
+      continue;
+    }
+    const hit =
+      pool.find((a) => a.id.toLowerCase() === w) ||
+      pool.find((a) => a.name.toLowerCase() === w) ||
+      pool.find((a) => a.name.toLowerCase().includes(w));
+    if (hit && !actors.includes(hit)) actors.push(hit);
+  }
+  if (!actors.length) {
+    ui.notifications?.warn(`Hourly XP: no rostered character matches "${target}".`);
+  }
+  return { actors, names: actors.map((a) => a.name).join(", ") || "the party" };
+}
+
+/**
+ * Play a donation FX: radiant aura on the targets + a chat proclamation.
+ * `target` is optional (name, id, actor, or array; blank = whole party).
+ */
+async function playFx(key, target) {
+  const def = FX[key];
+  if (!def) {
+    ui.notifications?.warn(`Hourly XP: unknown effect "${key}".`);
+    return false;
+  }
+  const { actors, names } = resolveFxTargets(target);
+  if (def.run) await def.run(actors);
+  await radiantAura(actors, def);
+  if (def.message) announce(`<p><strong>${escHtml(def.label)}</strong> — ${escHtml(def.message(names))}</p>`);
+  ui.notifications?.info(`Hourly XP: ${def.label} ($${def.price}).`);
+  return true;
+}
+
+/** The tick blessing: golden aura on every granted actor + a random Sigmar proclamation. */
+async function blessTick(actors, amount, count, tickNum, minutes) {
+  await radiantAura(actors, { inner: "255,244,200", mid: "255,205,95", size: 2.8 });
+  if (game.settings.get(MODULE_ID, "announceInChat")) {
+    const mult = xpMultiplier();
+    announce(
+      `<p><strong>${randomBlessing()}</strong></p>` +
+        `<p class="hint">Hourly XP — granted <strong>${amount} XP</strong> ` +
+        `to ${count} character(s)${mult > 1 ? " (DOUBLE XP!)" : ""} ` +
+        `(tick ${tickNum}, every ${minutes} min).</p>`
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Donation FX panel (GM only)                                          */
+/* ------------------------------------------------------------------ */
+
+class XPFxPanel extends Application {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "hourly-xp-fx",
+      title: "Hourly XP — Donation FX",
+      width: 560,
+      height: 560,
+      resizable: true,
+    });
+  }
+
+  getData() {
+    const groups = {};
+    for (const [key, d] of Object.entries(FX)) {
+      (groups[d.cat] = groups[d.cat] || []).push({ key, label: d.label, price: d.price });
+    }
+    return { groups: Object.entries(groups), target: this.target || "" };
+  }
+
+  async _renderInner(data) {
+    const sections = data.groups
+      .map(
+        ([cat, items]) => `
+        <h3>${escHtml(cat)} incentives</h3>
+        <div class="fx-grid">
+          ${items
+            .map(
+              (it) => `<button type="button" class="fx-btn" data-fx="${it.key}">` +
+                `${escHtml(it.label)} <span class="price">$${it.price}</span></button>`
+            )
+            .join("")}
+        </div>`
+      )
+      .join("");
+    return $(`
+      <div class="hourly-xp-fx">
+        <style>
+          .hourly-xp-fx .fx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+          .hourly-xp-fx .fx-btn { padding: 8px; cursor: pointer; }
+          .hourly-xp-fx .fx-btn .price { opacity: 0.7; font-size: 0.85em; }
+          .hourly-xp-fx h3 { margin: 8px 0 6px; border-bottom: 1px solid #555; }
+          .hourly-xp-fx .target-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+          .hourly-xp-fx .target-row input { flex: 1; }
+          .hourly-xp-fx .hint { opacity: 0.75; font-size: 0.85em; }
+        </style>
+        <div class="target-row">
+          <label>Target</label>
+          <input type="text" class="fx-target" placeholder="Character name — blank = whole party" value="${escHtml(data.target)}">
+        </div>
+        ${sections}
+        <p class="hint">Player and Chaos effects target one character or the whole party. Milestones are party-wide.</p>
+      </div>`);
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".fx-btn").on("click", async (ev) => {
+      const key = ev.currentTarget.dataset.fx;
+      const target = html.find(".fx-target").val()?.trim() || undefined;
+      this.target = target;
+      await playFx(key, target);
+    });
+  }
+}
+
+let fxPanelApp = null;
+
+/** Open the Donation FX panel. */
+function openFxPanel() {
+  if (!game.user?.isGM) {
+    ui.notifications?.warn("Hourly XP: only the GM can open the FX panel.");
+    return;
+  }
+  if (!fxPanelApp) fxPanelApp = new XPFxPanel();
+  fxPanelApp.render(true);
 }
 
 /**
@@ -314,17 +609,25 @@ function startTimer() {
 
 async function onTick() {
   if (!iAmActiveGM()) return; // GM changed mid-session; stay quiet
-  const amount = xpPerTick();
+  const mult = xpMultiplier();
+  const amount = xpPerTick() * mult;
   // Timer ticks never prompt: the default reason is logged silently.
-  const count = await grantXpToAll(amount, defaultReason());
+  const targets = unlockedRostered();
+  let count = 0;
+  for (const actor of targets) {
+    await awardXp(actor, amount, defaultReason());
+    count++;
+  }
   tickCount += 1;
   lastTickAt = Date.now();
   await recordGrant(amount, count);
-  if (game.settings.get(MODULE_ID, "announceInChat")) {
+  if (count > 0) {
+    const minutes = game.settings.get(MODULE_ID, "intervalMinutes");
+    await blessTick(targets, amount, count, tickCount, minutes);
+  } else if (game.settings.get(MODULE_ID, "announceInChat")) {
     const minutes = game.settings.get(MODULE_ID, "intervalMinutes");
     announce(
-      `<p><strong>Hourly XP</strong> — granted <strong>${amount} XP</strong> ` +
-      `to ${count} character(s) (tick ${tickCount}, every ${minutes} min).</p>`
+      `<p class="hint">Hourly XP — tick ${tickCount}, no eligible characters (every ${minutes} min).</p>`
     );
   }
 }
@@ -341,6 +644,9 @@ function status() {
     nextTickInSeconds: nextTickInSeconds(),
     sessionGranted,
     totalGranted: getTotalGranted(),
+    xpMultiplier: xpMultiplier(),
+    doubleXpEndsInSeconds:
+      doubleXpUntil > Date.now() ? Math.round((doubleXpUntil - Date.now()) / 1000) : null,
   };
 }
 
@@ -404,6 +710,10 @@ class XPRoster extends Application {
       totalGranted: getTotalGranted(),
       avgXp,
       avgTier: xpTier(avgXp),
+      doubleXp:
+        doubleXpUntil > Date.now()
+          ? `DOUBLE XP — ${fmtCountdown(Math.round((doubleXpUntil - Date.now()) / 1000))} left`
+          : null,
     };
   }
 
@@ -448,6 +758,7 @@ class XPRoster extends Application {
           <span>Session: <b>${data.sessionGranted} XP</b></span>
           <span>All-time: <b>${data.totalGranted} XP</b></span>
           <span>Party tier: <b>${escHtml(data.avgTier)}</b> <span class="hint">(avg ${data.avgXp} XP)</span></span>
+          ${data.doubleXp ? `<span><b style="color:#ffd766">${escHtml(data.doubleXp)}</b></span>` : ""}
         </div>
         <table>
           <thead><tr><th class="c">Select</th><th>Character</th><th class="n">Total XP</th><th class="n">Spent XP</th><th class="n">Available</th><th>Tier</th><th class="c">Lock</th><th class="c">Remove</th></tr></thead>
@@ -538,6 +849,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
 
   const tools = [
     { name: "roster", title: "Character roster", icon: "fas fa-users", action: () => openRoster() },
+    { name: "fx", title: "Donation FX", icon: "fas fa-wand-magic-sparkles", action: () => openFxPanel() },
     { name: "grantNow", title: "Grant XP now", icon: "fas fa-gift", action: () => grantNow() },
     { name: "start", title: "Start timer", icon: "fas fa-play", action: () => startTimer() },
     { name: "stop", title: "Stop timer", icon: "fas fa-stop", action: () => stopTimer() },
@@ -645,6 +957,15 @@ Hooks.once("init", () => {
     default: 0,
   });
 
+  game.settings.register(MODULE_ID, "celebrationFx", {
+    name: "Celebration visuals",
+    hint: "Flare a radiant aura around each character's tokens (plus a brief golden tint pulse) when XP drops and donation FX fire. No extra modules needed.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   game.settings.register(MODULE_ID, "excludedActors", {
     scope: "world",
     config: false,
@@ -652,7 +973,8 @@ Hooks.once("init", () => {
     default: {},
   });
 
-  const api = { start: startTimer, stop: () => stopTimer(), grantNow, status, roster: openRoster };
+  const api = { start: startTimer, stop: () => stopTimer(), grantNow, status, roster: openRoster,
+    fx: playFx, fxList, fxPanel: openFxPanel };
   const mod = game.modules.get(MODULE_ID);
   if (mod) mod.api = api;
   // Also expose globally for macro convenience.
