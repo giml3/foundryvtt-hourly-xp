@@ -55,9 +55,10 @@ A status bar across the top shows:
 The roster's ticker facts — next-drop countdown, session/all-time XP,
 party tier, DOUBLE XP status — also live in a small always-visible box
 pinned to the top of the players panel, just above the latency/FPS
-readout. The countdown ticks every second, no need to open the roster
-mid-session. Labels are kept short and rows never wrap, so it stays
-readable in the narrow panel.
+readout. The next-drop countdown is a big hero number that ticks every
+second; session/all-time XP and party tier stack beneath it. Labels are
+kept short and every value gets its own line, so it stays readable in
+the narrow panel — no need to open the roster mid-session.
 
 ### Blessings on every tick
 
