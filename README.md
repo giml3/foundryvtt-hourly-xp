@@ -71,9 +71,9 @@ incentives list** — 19 total:
 - **Milestones ($250–$2,000):** Hidden Truth, Bonus Boss, Seize the Dice,
   CHAOS HOUR, Chat Forges, DOUBLE XP, Fate Restored, Finale Wish
 
-Type a character name in the Target box to hit one character, or leave it
-blank for the whole party. Milestones are party-wide. Each effect plays
-its aura and posts a flavor proclamation in chat.
+Pick a character from the Target dropdown, or leave it on Whole party.
+Milestones are party-wide. Each effect plays its aura and posts a flavor
+proclamation in chat.
 
 The **$1,500 DOUBLE XP** milestone is functional: it doubles the per-tick
 grant for the next 4 real-time hours. The roster dashboard shows a
