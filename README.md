@@ -22,10 +22,22 @@ double-granted, even with multiple GMs online.
 toolbar gives you **Character roster**, **Grant XP now**, **Start timer**,
 and **Stop timer** with one click — no console needed.
 
-### Character roster
+### Character roster / DM dashboard
 
 The roster lists every player-owned character with **Total XP**,
-**Spent XP**, and **Available XP** (total minus spent).
+**Spent XP**, **Available XP** (total minus spent), and a rough
+**power tier** from total XP earned (Novice → Seasoned → Veteran →
+Heroic → Legendary). Tiers are a DM's at-a-glance guide, not official
+WFRP4e brackets.
+
+A status bar across the top shows:
+
+- **Next XP drop** — live countdown to the next timer tick
+  (or "timer stopped")
+- **Session** — XP granted by the module since the timer was started
+- **All-time** — XP granted by the module across all sessions
+  (stored as a world setting; reset it in Module Settings)
+- **Party tier** — tier of the party's average total XP
 
 - **Select** characters with the checkboxes, then **Grant XP to selected**
   to award the per-tick amount to just those characters.
@@ -53,7 +65,7 @@ Or run these in a script macro or the console (`F12`):
 HourlyXP.start();      // start the timer
 HourlyXP.stop();       // stop the timer
 HourlyXP.grantNow();   // one manual grant right now
-HourlyXP.status();     // { running, ticks, nextTickInSeconds }
+HourlyXP.status();     // { running, ticks, nextTickInSeconds, sessionGranted, totalGranted }
 HourlyXP.roster();     // open the character roster window
 ```
 
