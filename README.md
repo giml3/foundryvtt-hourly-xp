@@ -56,34 +56,36 @@ The roster's ticker facts — next-drop countdown, session/all-time XP,
 party tier, DOUBLE XP status — also live in a small always-visible box
 pinned to the top of the players panel, just above the latency/FPS
 readout. The countdown ticks every second, no need to open the roster
-mid-session.
+mid-session. Labels are kept short and rows never wrap, so it stays
+readable in the narrow panel.
 
 ### Blessings on every tick
 
-Each timer tick is a small ceremony: a **radiant golden aura** flares
-around every granted character's tokens (plus a brief golden tint pulse),
-and chat proclaims one of **8 rotating blessings of Sigmar** — e.g.
-*"Sigmar's blessing has been bestowed — you feel empowered!"* — followed
-by the mechanical summary. All visuals are vanilla Foundry (a glow tile
-under each token), so no extra modules are needed. Toggle with the
-**Celebration visuals** module setting.
+Each timer tick is a small ceremony: **LARGE text** fades in at the
+center of the screen — "Sigmar's Blessing" plus one of **8 rotating
+blessings of Sigmar**, e.g. *"Sigmar's blessing has been bestowed — you
+feel empowered!"* — holds a few seconds, then fades. Chat proclaims the
+blessing too, followed by the mechanical summary. Vanilla DOM, no extra
+modules needed. Toggle with the **Celebration visuals** module setting.
 
 ### Donation FX panel
 
 The toolbar's **Donation FX** button (or `HourlyXP.fxPanel()`) opens a
-panel with a one-click visual effect for **every item on the donation
-incentives list** — 19 total:
+panel with a one-click **center-screen banner** for **every item on the
+donation incentives list** — 19 total. Big text fades in mid-screen
+(gold for player boons, purple for GM chaos, bright white-gold for
+milestones), holds, then fades:
 
 - **Player ($5–$30):** Second Chance, Blessed Crit, Divine Swiftness,
   Sigmar's Hand, Cheat Morr, Blessing of Sigmar
 - **Chaos ($10–$30):** GM Intrusion, Fumble Curse, Cruel Complication,
-  Whisper of Betrayal, Ruin the Plan (dark red/purple auras)
+  Whisper of Betrayal, Ruin the Plan
 - **Milestones ($250–$2,000):** Hidden Truth, Bonus Boss, Seize the Dice,
   CHAOS HOUR, Chat Forges, DOUBLE XP, Fate Restored, Finale Wish
 
 Pick a character from the Target dropdown, or leave it on Whole party.
-Milestones are party-wide. Each effect plays its aura and posts a flavor
-proclamation in chat.
+Milestones are party-wide. Each effect flashes its banner and posts a
+flavor proclamation in chat.
 
 Every FX fired is logged in the panel's **FX history** (time, effect,
 target, price) with a running **donations total** — handy for tracking
