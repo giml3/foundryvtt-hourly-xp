@@ -19,8 +19,10 @@ The timer runs **only on the active GM's client**, so XP is never
 double-granted, even with multiple GMs online.
 
 **Toolbar button (GM only):** a star icon in the left scene-controls
-toolbar gives you **Character roster**, **Grant XP now**, **Start timer**,
-and **Stop timer** with one click — no console needed.
+toolbar gives you **Character roster**, **Donation FX**, **Grant XP now**,
+**Start timer**, **Stop timer**, and a **clock button** to change the tick
+interval (with 1/5/15/60-minute presets — handy for testing) with one
+click — no console needed.
 
 ### Character roster / DM dashboard
 
@@ -47,6 +49,14 @@ A status bar across the top shows:
   grants). **Restore removed** brings everyone back.
 - **Grant XP to all** awards the per-tick amount to every unlocked,
   rostered character — same as the toolbar's Grant XP now.
+
+### Ticker HUD
+
+The roster's ticker facts — next-drop countdown, session/all-time XP,
+party tier, DOUBLE XP status — also live in a small always-visible box
+pinned to the top of the players panel, just above the latency/FPS
+readout. The countdown ticks every second, no need to open the roster
+mid-session.
 
 ### Blessings on every tick
 
@@ -87,6 +97,8 @@ HourlyXP.fx("crit", "Zelp");  // Blessed Crit on Zelp ($10)
 HourlyXP.fx("chaosHour");     // CHAOS HOUR, party-wide ($1,000)
 HourlyXP.fx("doubleXp");      // arm 4h double XP ($1,500)
 HourlyXP.fxList();            // all 19 keys, labels, prices
+HourlyXP.setInterval(2);      // 2-minute ticks, restarts the timer
+HourlyXP.intervalPanel();     // clock-button interval dialog
 ```
 
 ### XP reasons and the system dialog
