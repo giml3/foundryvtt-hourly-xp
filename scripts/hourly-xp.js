@@ -299,6 +299,9 @@ function glowTexture(inner, mid) {
   }
 }
 
+/** How long celebration auras linger (ms). */
+const FX_DURATION_MS = 7500;
+
 /**
  * Flare a radiant aura under each affected token plus a brief golden tint
  * pulse on the token itself. `actors` are granted actors; def carries the
@@ -308,7 +311,7 @@ async function radiantAura(actors, def) {
   if (!game.settings.get(MODULE_ID, "celebrationFx")) return;
   const tex = glowTexture(def.inner, def.mid);
   const size = def.size || 2.4;
-  const dur = 2500;
+  const dur = FX_DURATION_MS;
   const jobs = [];
   for (const actor of actors) {
     const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens() : [];
@@ -318,8 +321,10 @@ async function radiantAura(actors, def) {
           try {
             const doc = token.document;
             const scene = doc?.parent;
-            const tw = token.w ?? doc?.width ?? 100;
-            const th = token.h ?? doc?.height ?? 100;
+            // Token x/y is the TOP-LEFT corner; center the aura on the token.
+            const gridSize = scene?.grid?.size ?? 100;
+            const tw = token.w ?? (doc?.width ?? 1) * gridSize;
+            const th = token.h ?? (doc?.height ?? 1) * gridSize;
             const tx = token.x ?? doc?.x ?? 0;
             const ty = token.y ?? doc?.y ?? 0;
             let tile = null;
@@ -327,7 +332,14 @@ async function radiantAura(actors, def) {
               const w = tw * size;
               const h = th * size;
               const docs = await scene.createEmbeddedDocuments("Tile", [
-                { "texture.src": tex, x: tx - w / 2, y: ty - h / 2, width: w, height: h, alpha: 0.95 },
+                {
+                  "texture.src": tex,
+                  x: tx + tw / 2 - w / 2,
+                  y: ty + th / 2 - h / 2,
+                  width: w,
+                  height: h,
+                  alpha: 0.95,
+                },
               ]);
               tile = docs?.[0] ?? null;
             }
