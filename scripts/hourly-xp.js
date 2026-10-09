@@ -448,16 +448,16 @@ function tickerData() {
 
 function tickerBoxHtml() {
   const d = tickerData();
+  const drop = d.timerRunning ? escHtml(fmtCountdownShort(nextTickInSeconds())) : "—";
   return (
-    `<div class="hx-row"><span>Next drop</span><b>${d.timerRunning ? escHtml(fmtCountdownShort(nextTickInSeconds())) : "—"}</b></div>` +
-    (d.timerRunning
-      ? ""
-      : `<div class="hx-row hx-note"><span>stopped</span></div>`) +
-    `<div class="hx-row"><span>Session</span><b>${fmtNum(d.sessionGranted)} XP</b></div>` +
-    `<div class="hx-row"><span>All-time</span><b>${fmtNum(d.totalGranted)} XP</b></div>` +
-    `<div class="hx-row"><span>Party</span><b>${escHtml(d.avgTier)}</b></div>` +
+    `<div class="hx-lab">Next drop</div>` +
+    `<div class="hx-timer">${drop}</div>` +
+    (d.timerRunning ? "" : `<div class="hx-lab hx-dim">stopped</div>`) +
+    `<div class="hx-lab">Session</div><div class="hx-val">${fmtNum(d.sessionGranted)} XP</div>` +
+    `<div class="hx-lab">All-time</div><div class="hx-val">${fmtNum(d.totalGranted)} XP</div>` +
+    `<div class="hx-lab">Party</div><div class="hx-val">${escHtml(d.avgTier)}</div>` +
     (d.doubleXpSecs != null
-      ? `<div class="hx-row"><b class="hx-2x">2X · ${escHtml(fmtCountdownShort(d.doubleXpSecs))}</b></div>`
+      ? `<div class="hx-2x">2X · ${escHtml(fmtCountdownShort(d.doubleXpSecs))}</div>`
       : "")
   );
 }
@@ -467,14 +467,16 @@ function ensureTickerCss() {
   const st = document.createElement("style");
   st.id = "hourly-xp-ticker-css";
   st.textContent =
-    "#hourly-xp-ticker{margin:0 0 6px;padding:5px 7px;background:rgba(0,0,0,.6);" +
+    "#hourly-xp-ticker{margin:0 0 6px;padding:6px 8px;background:rgba(0,0,0,.6);" +
     "border:1px solid #7a6a3f;border-radius:4px;font-size:11px;color:#e8e0c8;overflow:hidden}" +
-    "#hourly-xp-ticker .hx-row{display:flex;justify-content:space-between;align-items:baseline;" +
-    "gap:8px;padding:1px 0;white-space:nowrap;min-width:0}" +
-    "#hourly-xp-ticker .hx-row span{opacity:.72;flex:none}" +
-    "#hourly-xp-ticker .hx-note span{opacity:.55;font-style:italic}" +
-    "#hourly-xp-ticker b{color:#ffd766;font-variant-numeric:tabular-nums;flex:none}" +
-    "#hourly-xp-ticker .hx-2x{color:#ffe9a8}";
+    "#hourly-xp-ticker .hx-lab{font-size:9px;text-transform:uppercase;letter-spacing:1px;" +
+    "opacity:.6;margin-top:5px;white-space:nowrap}" +
+    "#hourly-xp-ticker .hx-lab:first-child{margin-top:0}" +
+    "#hourly-xp-ticker .hx-dim{text-transform:none;letter-spacing:0;font-style:italic}" +
+    "#hourly-xp-ticker .hx-timer{font-size:26px;font-weight:800;color:#ffd766;line-height:1.05;" +
+    "font-variant-numeric:tabular-nums;text-shadow:0 0 10px rgba(255,215,102,.4);white-space:nowrap}" +
+    "#hourly-xp-ticker .hx-val{font-size:13px;color:#e8e0c8;font-variant-numeric:tabular-nums;white-space:nowrap}" +
+    "#hourly-xp-ticker .hx-2x{margin-top:5px;font-size:11px;font-weight:700;color:#ffe9a8;white-space:nowrap}";
   document.head.appendChild(st);
 }
 
