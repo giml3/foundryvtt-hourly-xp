@@ -34,6 +34,8 @@
  *   game.modules.get("hourly-xp").api.fx("crit", "Zelp"); // donation FX, optional target name
  *   game.modules.get("hourly-xp").api.fxList();    // all FX keys, labels, prices
  *   game.modules.get("hourly-xp").api.fxPanel();   // open the Donation FX panel
+ *   game.modules.get("hourly-xp").api.fxHistory(); // every FX fired: time, label, price, target
+ *   game.modules.get("hourly-xp").api.clearFxHistory(); // wipe the FX log
  *   game.modules.get("hourly-xp").api.setInterval(2); // 2-minute ticks (restarts timer)
  *   game.modules.get("hourly-xp").api.intervalPanel(); // clock-button dialog
  *
@@ -237,6 +239,36 @@ function fxList() {
   return Object.entries(FX).map(([key, d]) => ({ key, label: d.label, cat: d.cat, price: d.price }));
 }
 
+/** Donation FX history (world setting, newest last, capped). Entries: {at, key, label, price, names}. */
+const FX_HISTORY_MAX = 100;
+
+function getFxHistory() {
+  const h = game.settings.get(MODULE_ID, "fxHistory");
+  return Array.isArray(h) ? h : [];
+}
+
+async function logFx(key, def, names) {
+  const h = [...getFxHistory(), { at: Date.now(), key, label: def.label, price: def.price, names }];
+  await game.settings.set(MODULE_ID, "fxHistory", h.slice(-FX_HISTORY_MAX));
+}
+
+async function clearFxHistory() {
+  await game.settings.set(MODULE_ID, "fxHistory", []);
+}
+
+/** Total dollars of donation FX fired (sum of history prices). */
+function fxDonationTotal() {
+  return getFxHistory().reduce((sum, e) => sum + (Number(e.price) || 0), 0);
+}
+
+function fmtFxTime(at) {
+  try {
+    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (e) {
+    return "";
+  }
+}
+
 /** DOUBLE XP state: timestamp (ms) until which ticks grant double. */
 let doubleXpUntil = 0;
 
@@ -362,6 +394,7 @@ async function playFx(key, target) {
   }
   const { actors, names } = resolveFxTargets(target);
   if (def.run) await def.run(actors);
+  await logFx(key, def, names);
   await radiantAura(actors, def);
   if (def.message) announce(`<p><strong>${escHtml(def.label)}</strong> — ${escHtml(def.message(names))}</p>`);
   ui.notifications?.info(`Hourly XP: ${def.label} ($${def.price}).`);
@@ -413,11 +446,13 @@ function tickerData() {
 function tickerBoxHtml() {
   const d = tickerData();
   return (
-    `<div class="hx-row"><span>Next XP drop</span><b>${escHtml(d.nextDrop)}</b></div>` +
-    (d.timerRunning ? "" : `<div class="hx-row hint"><span>timer stopped</span></div>`) +
+    `<div class="hx-row"><span>Next drop</span><b>${d.timerRunning ? escHtml(d.nextDrop) : "—"}</b></div>` +
+    (d.timerRunning
+      ? ""
+      : `<div class="hx-row hx-note"><span>timer stopped</span></div>`) +
     `<div class="hx-row"><span>Session</span><b>${d.sessionGranted} XP</b></div>` +
     `<div class="hx-row"><span>All-time</span><b>${d.totalGranted} XP</b></div>` +
-    `<div class="hx-row"><span>Party tier</span><b>${escHtml(d.avgTier)}</b></div>` +
+    `<div class="hx-row"><span>Party</span><b>${escHtml(d.avgTier)}</b></div>` +
     (d.doubleXp ? `<div class="hx-row"><b class="hx-2x">${escHtml(d.doubleXp)}</b></div>` : "")
   );
 }
@@ -428,11 +463,13 @@ function ensureTickerCss() {
   st.id = "hourly-xp-ticker-css";
   st.textContent =
     "#hourly-xp-ticker{margin:0 0 6px;padding:6px 8px;background:rgba(0,0,0,.6);" +
-    "border:1px solid #7a6a3f;border-radius:4px;font-size:12px;color:#e8e0c8}" +
-    "#hourly-xp-ticker .hx-row{display:flex;justify-content:space-between;gap:8px;padding:1px 0}" +
-    "#hourly-xp-ticker .hint{opacity:.7}" +
+    "border:1px solid #7a6a3f;border-radius:4px;font-size:12px;color:#e8e0c8;overflow:hidden}" +
+    "#hourly-xp-ticker .hx-row{display:flex;justify-content:space-between;align-items:baseline;" +
+    "gap:10px;padding:1px 0;white-space:nowrap}" +
+    "#hourly-xp-ticker .hx-row span{opacity:.72}" +
+    "#hourly-xp-ticker .hx-note span{opacity:.55;font-style:italic}" +
     "#hourly-xp-ticker b{color:#ffd766;font-variant-numeric:tabular-nums}" +
-    "#hourly-xp-ticker .hx-2x{color:#ffe9a8}";
+    "#hourly-xp-ticker .hx-2x{color:#ffe9a8;font-size:11px}";
   document.head.appendChild(st);
 }
 
@@ -493,6 +530,8 @@ class XPFxPanel extends Application {
         name: a.name,
         locked: !!locked[a.id],
       })),
+      history: getFxHistory().slice().reverse(),
+      fxTotal: fxDonationTotal(),
     };
   }
 
@@ -530,12 +569,34 @@ class XPFxPanel extends Application {
           .hourly-xp-fx .target-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
           .hourly-xp-fx .target-row select { flex: 1; }
           .hourly-xp-fx .hint { opacity: 0.75; font-size: 0.85em; }
+          .hourly-xp-fx .fx-total { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 6px; }
+          .hourly-xp-fx .fx-total b { color: #ffd766; }
+          .hourly-xp-fx .fx-history { max-height: 180px; overflow-y: auto; border: 1px solid #555; border-radius: 4px; padding: 4px 6px; }
+          .hourly-xp-fx .fx-hist-row { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #444; font-size: 0.9em; white-space: nowrap; }
+          .hourly-xp-fx .fx-hist-row:last-child { border-bottom: none; }
+          .hourly-xp-fx .fx-hist-row .t { opacity: 0.6; font-variant-numeric: tabular-nums; }
+          .hourly-xp-fx .fx-hist-row .price { margin-left: auto; opacity: 0.8; }
+          .hourly-xp-fx .fx-hist-row .names { opacity: 0.7; overflow: hidden; text-overflow: ellipsis; }
         </style>
         <div class="target-row">
           <label>Target</label>
           <select class="fx-target">${targetOptions}</select>
         </div>
         ${sections}
+        <h3>FX history</h3>
+        <div class="fx-total"><span>Donations via FX: <b>$${data.fxTotal}</b></span><button type="button" class="fx-clear">Clear</button></div>
+        <div class="fx-history">
+          ${data.history.length
+            ? data.history
+                .map(
+                  (h) => `<div class="fx-hist-row"><span class="t">${escHtml(fmtFxTime(h.at))}</span>` +
+                    `<span>${escHtml(h.label)}</span>` +
+                    `<span class="names">${escHtml(h.names)}</span>` +
+                    `<span class="price">$${Number(h.price) || 0}</span></div>`
+                )
+                .join("")
+            : `<div class="fx-hist-row"><span class="names">No FX fired yet.</span></div>`}
+        </div>
         <p class="hint">Player and Chaos effects target one character or the whole party. Milestones are party-wide. Locked characters are marked.</p>
       </div>`);
   }
@@ -550,6 +611,11 @@ class XPFxPanel extends Application {
       const target = html.find(".fx-target").val() || undefined;
       this.target = target || "";
       await playFx(key, target);
+      this.render(); // refresh the history list
+    });
+    html.find(".fx-clear").on("click", async () => {
+      await clearFxHistory();
+      this.render();
     });
   }
 }
@@ -1114,6 +1180,13 @@ Hooks.once("init", () => {
     default: true,
   });
 
+  game.settings.register(MODULE_ID, "fxHistory", {
+    scope: "world",
+    config: false,
+    type: Object,
+    default: [],
+  });
+
   game.settings.register(MODULE_ID, "excludedActors", {
     scope: "world",
     config: false,
@@ -1122,8 +1195,8 @@ Hooks.once("init", () => {
   });
 
   const api = { start: startTimer, stop: () => stopTimer(), grantNow, status, roster: openRoster,
-    fx: playFx, fxList, fxPanel: openFxPanel, setInterval: setIntervalMinutes,
-    intervalPanel: promptInterval };
+    fx: playFx, fxList, fxPanel: openFxPanel, fxHistory: getFxHistory, clearFxHistory,
+    setInterval: setIntervalMinutes, intervalPanel: promptInterval };
   const mod = game.modules.get(MODULE_ID);
   if (mod) mod.api = api;
   // Also expose globally for macro convenience.
