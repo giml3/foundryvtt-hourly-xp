@@ -398,10 +398,28 @@ class XPFxPanel extends Application {
     for (const [key, d] of Object.entries(FX)) {
       (groups[d.cat] = groups[d.cat] || []).push({ key, label: d.label, price: d.price });
     }
-    return { groups: Object.entries(groups), target: this.target || "" };
+    const locked = getLocked();
+    return {
+      groups: Object.entries(groups),
+      target: this.target || "",
+      characters: rosterActors().map((a) => ({
+        id: a.id,
+        name: a.name,
+        locked: !!locked[a.id],
+      })),
+    };
   }
 
   async _renderInner(data) {
+    const targetOptions =
+      `<option value="">Whole party</option>` +
+      data.characters
+        .map(
+          (c) =>
+            `<option value="${c.id}"${data.target === c.id ? " selected" : ""}>` +
+            `${escHtml(c.name)}${c.locked ? " (locked)" : ""}</option>`
+        )
+        .join("");
     const sections = data.groups
       .map(
         ([cat, items]) => `
@@ -424,24 +442,27 @@ class XPFxPanel extends Application {
           .hourly-xp-fx .fx-btn .price { opacity: 0.7; font-size: 0.85em; }
           .hourly-xp-fx h3 { margin: 8px 0 6px; border-bottom: 1px solid #555; }
           .hourly-xp-fx .target-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-          .hourly-xp-fx .target-row input { flex: 1; }
+          .hourly-xp-fx .target-row select { flex: 1; }
           .hourly-xp-fx .hint { opacity: 0.75; font-size: 0.85em; }
         </style>
         <div class="target-row">
           <label>Target</label>
-          <input type="text" class="fx-target" placeholder="Character name — blank = whole party" value="${escHtml(data.target)}">
+          <select class="fx-target">${targetOptions}</select>
         </div>
         ${sections}
-        <p class="hint">Player and Chaos effects target one character or the whole party. Milestones are party-wide.</p>
+        <p class="hint">Player and Chaos effects target one character or the whole party. Milestones are party-wide. Locked characters are marked.</p>
       </div>`);
   }
 
   activateListeners(html) {
     super.activateListeners(html);
+    html.find(".fx-target").on("change", (ev) => {
+      this.target = ev.currentTarget.value || "";
+    });
     html.find(".fx-btn").on("click", async (ev) => {
       const key = ev.currentTarget.dataset.fx;
-      const target = html.find(".fx-target").val()?.trim() || undefined;
-      this.target = target;
+      const target = html.find(".fx-target").val() || undefined;
+      this.target = target || "";
       await playFx(key, target);
     });
   }
@@ -985,9 +1006,10 @@ Hooks.once("ready", () => {
   if (game.settings.get(MODULE_ID, "autoStart")) startTimer();
 });
 
-// Keep the open roster fresh when actors change.
+// Keep the open roster and FX panel fresh when actors change.
 for (const hook of ["createActor", "updateActor", "deleteActor"]) {
   Hooks.on(hook, () => {
     if (rosterApp?.rendered) rosterApp.render();
+    if (fxPanelApp?.rendered) fxPanelApp.render();
   });
 }
