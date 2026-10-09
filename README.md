@@ -85,6 +85,11 @@ Pick a character from the Target dropdown, or leave it on Whole party.
 Milestones are party-wide. Each effect plays its aura and posts a flavor
 proclamation in chat.
 
+Every FX fired is logged in the panel's **FX history** (time, effect,
+target, price) with a running **donations total** — handy for tracking
+the marathon's fundraising live. The log persists in the world; **Clear**
+wipes it. `HourlyXP.fxHistory()` returns the raw entries.
+
 The **$1,500 DOUBLE XP** milestone is functional: it doubles the per-tick
 grant for the next 4 real-time hours. The roster dashboard shows a
 `DOUBLE XP — 3h 12m left` badge while it's active, and
