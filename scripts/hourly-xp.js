@@ -12,11 +12,15 @@
  * Manual grants ask for the reason ONCE, then apply it to everyone;
  * automatic timer ticks log the default reason silently.
  *
+ * The GM's character roster doubles as a DM dashboard: live countdown to
+ * the next XP drop, XP granted this session vs. all-time, and a rough
+ * power tier per character (plus the party average) based on total XP.
+ *
  * Macro API (run as GM):
  *   game.modules.get("hourly-xp").api.start();     // start the timer
  *   game.modules.get("hourly-xp").api.stop();      // stop the timer
  *   game.modules.get("hourly-xp").api.grantNow();   // manual grant (one reason prompt)
- *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in?
+ *   game.modules.get("hourly-xp").api.status();    // running? ticks? next in? granted?
  *   game.modules.get("hourly-xp").api.roster();    // open the character roster
  *
  * A GM-only toolbar button (star icon, left toolbar) exposes the character
@@ -28,6 +32,7 @@ const MODULE_ID = "hourly-xp";
 let xpTimer = null;
 let tickCount = 0;
 let lastTickAt = 0;
+let sessionGranted = 0; // XP granted by this module since the timer was (re)started
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -103,6 +108,60 @@ function rosterActors() {
 function defaultReason() {
   const r = String(game.settings.get(MODULE_ID, "defaultReason") ?? "");
   return r.trim() || "Hourly XP";
+}
+
+/* ------------------------------------------------------------------ */
+/* DM dashboard: totals, countdown, tiers                              */
+/* ------------------------------------------------------------------ */
+
+/** All-time XP granted by this module (world setting, survives restarts). */
+function getTotalGranted() {
+  return Number(game.settings.get(MODULE_ID, "totalGranted")) || 0;
+}
+
+/** Record a grant of `amount` XP to `count` characters. */
+async function recordGrant(amount, count) {
+  const gained = amount * count;
+  if (gained <= 0) return;
+  sessionGranted += gained;
+  await game.settings.set(MODULE_ID, "totalGranted", getTotalGranted() + gained);
+}
+
+/**
+ * Rough power tier from a character's total XP earned. WFRP4e has no
+ * official tier brackets, so treat these as a DM's at-a-glance guide:
+ * a starting character sits near 0, and ~100 XP/hour puts the party
+ * around Heroic by the back half of a 24-hour marathon.
+ */
+const XP_TIERS = [
+  { min: 2000, label: "Legendary" },
+  { min: 1000, label: "Heroic" },
+  { min: 500, label: "Veteran" },
+  { min: 200, label: "Seasoned" },
+  { min: 0, label: "Novice" },
+];
+
+function xpTier(total) {
+  for (const t of XP_TIERS) if (total >= t.min) return t.label;
+  return "Novice";
+}
+
+/** Seconds until the next tick, or null when the timer is stopped. */
+function nextTickInSeconds() {
+  if (!xpTimer) return null;
+  const minutes = Number(game.settings.get(MODULE_ID, "intervalMinutes")) || 60;
+  return Math.max(0, Math.round((minutes * 60 * 1000 - (Date.now() - lastTickAt)) / 1000));
+}
+
+/** "1h 23m" / "4m 05s" / "37s" — null/undefined renders as an em dash. */
+function fmtCountdown(sec) {
+  if (sec == null) return "—";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
 }
 
 /**
@@ -213,6 +272,7 @@ async function manualGrant(targets, amount) {
     await awardXp(actor, amount, reason);
     count++;
   }
+  await recordGrant(amount, count);
   ui.notifications?.info(`Hourly XP: granted ${amount} XP to ${count} character(s).`);
   return count;
 }
@@ -246,6 +306,7 @@ function startTimer() {
   const amount = Math.max(0, Number(game.settings.get(MODULE_ID, "xpPerTick")) || 0);
   tickCount = 0;
   lastTickAt = Date.now();
+  sessionGranted = 0; // fresh timer run, fresh session counter
   xpTimer = setInterval(onTick, minutes * 60 * 1000);
   ui.notifications?.info(`Hourly XP started: ${amount} XP every ${minutes} minute(s).`);
   return true;
@@ -258,6 +319,7 @@ async function onTick() {
   const count = await grantXpToAll(amount, defaultReason());
   tickCount += 1;
   lastTickAt = Date.now();
+  await recordGrant(amount, count);
   if (game.settings.get(MODULE_ID, "announceInChat")) {
     const minutes = game.settings.get(MODULE_ID, "intervalMinutes");
     announce(
@@ -273,11 +335,13 @@ async function grantNow() {
 }
 
 function status() {
-  const minutes = Number(game.settings.get(MODULE_ID, "intervalMinutes")) || 60;
-  const nextIn = xpTimer
-    ? Math.max(0, Math.round((minutes * 60 * 1000 - (Date.now() - lastTickAt)) / 1000))
-    : null;
-  return { running: !!xpTimer, ticks: tickCount, nextTickInSeconds: nextIn };
+  return {
+    running: !!xpTimer,
+    ticks: tickCount,
+    nextTickInSeconds: nextTickInSeconds(),
+    sessionGranted,
+    totalGranted: getTotalGranted(),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -304,8 +368,8 @@ class XPRoster extends Application {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "hourly-xp-roster",
       title: "Hourly XP — Character Roster",
-      width: 640,
-      height: 480,
+      width: 720,
+      height: 520,
       resizable: true,
     });
   }
@@ -315,20 +379,31 @@ class XPRoster extends Application {
     const actors = rosterActors();
     const ids = new Set(actors.map((a) => a.id));
     for (const id of [...this.selected]) if (!ids.has(id)) this.selected.delete(id);
+    const rows = actors.map((a) => {
+      const { total, spent, available } = readXp(a);
+      return {
+        id: a.id,
+        name: a.name,
+        img: a.img,
+        total,
+        spent,
+        available,
+        tier: xpTier(total),
+        locked: !!locked[a.id],
+        selected: this.selected.has(a.id),
+      };
+    });
+    const avgXp = rows.length
+      ? Math.round(rows.reduce((sum, r) => sum + r.total, 0) / rows.length)
+      : 0;
     return {
-      rows: actors.map((a) => {
-        const { total, spent, available } = readXp(a);
-        return {
-          id: a.id,
-          name: a.name,
-          img: a.img,
-          total,
-          spent,
-          available,
-          locked: !!locked[a.id],
-          selected: this.selected.has(a.id),
-        };
-      }),
+      rows,
+      timerRunning: !!xpTimer,
+      nextDrop: fmtCountdown(nextTickInSeconds()),
+      sessionGranted,
+      totalGranted: getTotalGranted(),
+      avgXp,
+      avgTier: xpTier(avgXp),
     };
   }
 
@@ -347,6 +422,7 @@ class XPRoster extends Application {
           <td class="n">${r.total}</td>
           <td class="n">${r.spent}</td>
           <td class="n">${r.available}</td>
+          <td>${escHtml(r.tier)}</td>
           <td class="c"><button type="button" class="lock-btn" title="${
             r.locked ? "Unlock" : "Lock"
           }"><i class="fas fa-${r.locked ? "lock-open" : "lock"}"></i></button></td>
@@ -354,7 +430,7 @@ class XPRoster extends Application {
         </tr>`
           )
           .join("")
-      : `<tr><td colspan="7" class="c">No player characters found.</td></tr>`;
+      : `<tr><td colspan="8" class="c">No player characters found.</td></tr>`;
     return $(`
       <div class="hourly-xp-roster">
         <style>
@@ -364,9 +440,17 @@ class XPRoster extends Application {
           .hourly-xp-roster td.c, .hourly-xp-roster th.c { text-align: center; }
           .hourly-xp-roster .actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
           .hourly-xp-roster .hint { opacity: 0.75; font-size: 0.85em; }
+          .hourly-xp-roster .statusbar { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 8px; padding: 6px 8px; border: 1px solid #555; border-radius: 4px; }
+          .hourly-xp-roster .statusbar b { font-variant-numeric: tabular-nums; }
         </style>
+        <div class="statusbar">
+          <span>Next XP drop: <b class="next-drop">${escHtml(data.nextDrop)}</b>${data.timerRunning ? "" : ' <span class="hint">(timer stopped)</span>'}</span>
+          <span>Session: <b>${data.sessionGranted} XP</b></span>
+          <span>All-time: <b>${data.totalGranted} XP</b></span>
+          <span>Party tier: <b>${escHtml(data.avgTier)}</b> <span class="hint">(avg ${data.avgXp} XP)</span></span>
+        </div>
         <table>
-          <thead><tr><th class="c">Select</th><th>Character</th><th class="n">Total XP</th><th class="n">Spent XP</th><th class="n">Available</th><th class="c">Lock</th><th class="c">Remove</th></tr></thead>
+          <thead><tr><th class="c">Select</th><th>Character</th><th class="n">Total XP</th><th class="n">Spent XP</th><th class="n">Available</th><th>Tier</th><th class="c">Lock</th><th class="c">Remove</th></tr></thead>
           <tbody>${body}</tbody>
         </table>
         <div class="actions">
@@ -380,6 +464,13 @@ class XPRoster extends Application {
 
   activateListeners(html) {
     super.activateListeners(html);
+    // Live countdown: refresh the "next drop" readout every second.
+    if (this._cdInt) clearInterval(this._cdInt);
+    this._cdInt = setInterval(() => {
+      const el = this.element?.find(".next-drop");
+      if (el?.length) el.text(fmtCountdown(nextTickInSeconds()));
+      else clearInterval(this._cdInt);
+    }, 1000);
     const idOf = (el) => el.closest("tr")?.dataset.actorId;
     html.find("input.sel").on("change", (ev) => {
       const id = idOf(ev.currentTarget);
@@ -415,6 +506,14 @@ class XPRoster extends Application {
       await restoreExcluded();
       this.render();
     });
+  }
+
+  async close(options) {
+    if (this._cdInt) {
+      clearInterval(this._cdInt);
+      this._cdInt = null;
+    }
+    return super.close(options);
   }
 }
 
@@ -535,6 +634,15 @@ Hooks.once("init", () => {
     config: false,
     type: Object,
     default: {},
+  });
+
+  game.settings.register(MODULE_ID, "totalGranted", {
+    name: "Total XP granted (all-time)",
+    hint: "Running total of XP this module has granted. Shown in the roster dashboard; reset by setting it to 0.",
+    scope: "world",
+    config: true,
+    type: Number,
+    default: 0,
   });
 
   game.settings.register(MODULE_ID, "excludedActors", {
