@@ -15,6 +15,8 @@
  * The GM's character roster doubles as a DM dashboard: live countdown to
  * the next XP drop, XP granted this session vs. all-time, and a rough
  * power tier per character (plus the party average) based on total XP.
+ * The same ticker facts also live in a small always-visible box pinned
+ * to the top of the players panel, just above the latency/FPS readout.
  *
  * Every timer tick is a little ceremony: a radiant golden aura flares
  * around each granted character's tokens and chat proclaims one of a
@@ -32,6 +34,8 @@
  *   game.modules.get("hourly-xp").api.fx("crit", "Zelp"); // donation FX, optional target name
  *   game.modules.get("hourly-xp").api.fxList();    // all FX keys, labels, prices
  *   game.modules.get("hourly-xp").api.fxPanel();   // open the Donation FX panel
+ *   game.modules.get("hourly-xp").api.setInterval(2); // 2-minute ticks (restarts timer)
+ *   game.modules.get("hourly-xp").api.intervalPanel(); // clock-button dialog
  *
  * A GM-only toolbar button (star icon, left toolbar) exposes the character
  * roster, Grant Now, Start, and Stop without touching the console.
@@ -365,8 +369,7 @@ async function playFx(key, target) {
 }
 
 /** The tick blessing: golden aura on every granted actor + a random Sigmar proclamation. */
-async function blessTick(actors, amount, count, tickNum, minutes) {
-  await radiantAura(actors, { inner: "255,244,200", mid: "255,205,95", size: 2.8 });
+async function blessTick(actors, amount, count, tickNum, minutes) {  await radiantAura(actors, { inner: "255,244,200", mid: "255,205,95", size: 2.8 });
   if (game.settings.get(MODULE_ID, "announceInChat")) {
     const mult = xpMultiplier();
     announce(
@@ -376,6 +379,89 @@ async function blessTick(actors, amount, count, tickNum, minutes) {
         `(tick ${tickNum}, every ${minutes} min).</p>`
     );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ticker HUD — always-visible box above the players list              */
+/*                                                                     */
+/* The same ticker facts from the roster dashboard (next drop,          */
+/* session/all-time XP, party tier, DOUBLE XP) live in a small box      */
+/* pinned to the top of the players panel, just above the              */
+/* latency/FPS readout — no need to open the roster mid-session.        */
+/* ------------------------------------------------------------------ */
+
+/** Shared ticker facts for the roster status bar and the players HUD box. */
+function tickerData() {
+  const totals = rosterActors().map((a) => readXp(a).total);
+  const avgXp = totals.length
+    ? Math.round(totals.reduce((sum, t) => sum + t, 0) / totals.length)
+    : 0;
+  return {
+    timerRunning: !!xpTimer,
+    nextDrop: fmtCountdown(nextTickInSeconds()),
+    sessionGranted,
+    totalGranted: getTotalGranted(),
+    avgXp,
+    avgTier: xpTier(avgXp),
+    doubleXp:
+      doubleXpUntil > Date.now()
+        ? `DOUBLE XP — ${fmtCountdown(Math.round((doubleXpUntil - Date.now()) / 1000))} left`
+        : null,
+  };
+}
+
+function tickerBoxHtml() {
+  const d = tickerData();
+  return (
+    `<div class="hx-row"><span>Next XP drop</span><b>${escHtml(d.nextDrop)}</b></div>` +
+    (d.timerRunning ? "" : `<div class="hx-row hint"><span>timer stopped</span></div>`) +
+    `<div class="hx-row"><span>Session</span><b>${d.sessionGranted} XP</b></div>` +
+    `<div class="hx-row"><span>All-time</span><b>${d.totalGranted} XP</b></div>` +
+    `<div class="hx-row"><span>Party tier</span><b>${escHtml(d.avgTier)}</b></div>` +
+    (d.doubleXp ? `<div class="hx-row"><b class="hx-2x">${escHtml(d.doubleXp)}</b></div>` : "")
+  );
+}
+
+function ensureTickerCss() {
+  if (typeof document === "undefined" || document.getElementById("hourly-xp-ticker-css")) return;
+  const st = document.createElement("style");
+  st.id = "hourly-xp-ticker-css";
+  st.textContent =
+    "#hourly-xp-ticker{margin:0 0 6px;padding:6px 8px;background:rgba(0,0,0,.6);" +
+    "border:1px solid #7a6a3f;border-radius:4px;font-size:12px;color:#e8e0c8}" +
+    "#hourly-xp-ticker .hx-row{display:flex;justify-content:space-between;gap:8px;padding:1px 0}" +
+    "#hourly-xp-ticker .hint{opacity:.7}" +
+    "#hourly-xp-ticker b{color:#ffd766;font-variant-numeric:tabular-nums}" +
+    "#hourly-xp-ticker .hx-2x{color:#ffe9a8}";
+  document.head.appendChild(st);
+}
+
+let tickerInt = null;
+
+/** Paint (or create) the ticker box at the top of the players panel. */
+function paintTickerBox() {
+  try {
+    if (typeof document === "undefined" || !game.user?.isGM) return;
+    ensureTickerCss();
+    const players = document.getElementById("players");
+    if (!players) return;
+    let box = document.getElementById("hourly-xp-ticker");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "hourly-xp-ticker";
+      players.prepend(box);
+    }
+    box.innerHTML = tickerBoxHtml();
+  } catch (e) {
+    /* never let the HUD break the game */
+  }
+}
+
+/** Start the 1s HUD refresh (GM only, once per session). */
+function startTickerHud() {
+  if (tickerInt || !game.user?.isGM) return;
+  paintTickerBox();
+  tickerInt = setInterval(paintTickerBox, 1000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -720,22 +806,7 @@ class XPRoster extends Application {
         selected: this.selected.has(a.id),
       };
     });
-    const avgXp = rows.length
-      ? Math.round(rows.reduce((sum, r) => sum + r.total, 0) / rows.length)
-      : 0;
-    return {
-      rows,
-      timerRunning: !!xpTimer,
-      nextDrop: fmtCountdown(nextTickInSeconds()),
-      sessionGranted,
-      totalGranted: getTotalGranted(),
-      avgXp,
-      avgTier: xpTier(avgXp),
-      doubleXp:
-        doubleXpUntil > Date.now()
-          ? `DOUBLE XP — ${fmtCountdown(Math.round((doubleXpUntil - Date.now()) / 1000))} left`
-          : null,
-    };
+    return { rows, ...tickerData() };
   }
 
   async _renderInner(data) {
@@ -861,6 +932,61 @@ function openRoster() {
   rosterApp.render(true);
 }
 
+/**
+ * Set the tick interval in minutes. Restarts the running timer so the new
+ * interval takes effect immediately. Returns true on success.
+ */
+async function setIntervalMinutes(n) {
+  const minutes = Math.floor(Number(n));
+  if (!Number.isFinite(minutes) || minutes < 1) {
+    ui.notifications?.warn("Hourly XP: interval must be at least 1 minute.");
+    return false;
+  }
+  await game.settings.set(MODULE_ID, "intervalMinutes", minutes);
+  if (xpTimer) startTimer(); // restart so the new interval applies now
+  else ui.notifications?.info(`Hourly XP: interval set to ${minutes} minute(s).`);
+  return true;
+}
+
+/** Clock-button dialog: one-click presets plus a custom minutes field. */
+function promptInterval() {
+  if (!iAmActiveGM()) {
+    ui.notifications?.warn("Hourly XP: only the active GM can change the interval.");
+    return;
+  }
+  const current = Number(game.settings.get(MODULE_ID, "intervalMinutes")) || 60;
+  const perTick = xpPerTick();
+  const buttons = {
+    cancel: { icon: '<i class="fas fa-times"></i>', label: "Cancel" },
+  };
+  for (const p of [1, 5, 15, 60]) {
+    buttons[`p${p}`] = {
+      icon: '<i class="fas fa-clock"></i>',
+      label: `${p} min`,
+      callback: () => {
+        setIntervalMinutes(p);
+      },
+    };
+  }
+  buttons.set = {
+    icon: '<i class="fas fa-check"></i>',
+    label: "Set",
+    callback: (html) => {
+      setIntervalMinutes(html.find('[name="minutes"]').val());
+    },
+  };
+  new Dialog({
+    title: "Hourly XP — Tick interval",
+    content:
+      `<form><p>Currently <strong>${current} min</strong> (${perTick} XP per tick).</p>` +
+      `<div class="form-group"><label>Minutes</label>` +
+      `<input type="number" name="minutes" value="${current}" min="1" step="1"></div>` +
+      `<p class="hint">Presets are one click — handy for testing short ticks.</p></form>`,
+    buttons,
+    default: "set",
+  }).render(true);
+}
+
 /* ------------------------------------------------------------------ */
 /* Toolbar button (GM only)                                             */
 /* ------------------------------------------------------------------ */
@@ -874,6 +1000,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
     { name: "grantNow", title: "Grant XP now", icon: "fas fa-gift", action: () => grantNow() },
     { name: "start", title: "Start timer", icon: "fas fa-play", action: () => startTimer() },
     { name: "stop", title: "Stop timer", icon: "fas fa-stop", action: () => stopTimer() },
+    { name: "interval", title: "Set tick interval", icon: "fas fa-clock", action: () => promptInterval() },
   ];
 
   if (Array.isArray(controls)) {
@@ -995,7 +1122,8 @@ Hooks.once("init", () => {
   });
 
   const api = { start: startTimer, stop: () => stopTimer(), grantNow, status, roster: openRoster,
-    fx: playFx, fxList, fxPanel: openFxPanel };
+    fx: playFx, fxList, fxPanel: openFxPanel, setInterval: setIntervalMinutes,
+    intervalPanel: promptInterval };
   const mod = game.modules.get(MODULE_ID);
   if (mod) mod.api = api;
   // Also expose globally for macro convenience.
@@ -1004,7 +1132,11 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", () => {
   if (game.settings.get(MODULE_ID, "autoStart")) startTimer();
+  startTickerHud();
 });
+
+// Re-mount the ticker box whenever the players panel re-renders.
+Hooks.on("renderPlayers", () => paintTickerBox());
 
 // Keep the open roster and FX panel fresh when actors change.
 for (const hook of ["createActor", "updateActor", "deleteActor"]) {
