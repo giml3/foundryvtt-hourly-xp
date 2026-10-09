@@ -48,6 +48,47 @@ A status bar across the top shows:
 - **Grant XP to all** awards the per-tick amount to every unlocked,
   rostered character — same as the toolbar's Grant XP now.
 
+### Blessings on every tick
+
+Each timer tick is a small ceremony: a **radiant golden aura** flares
+around every granted character's tokens (plus a brief golden tint pulse),
+and chat proclaims one of **8 rotating blessings of Sigmar** — e.g.
+*"Sigmar's blessing has been bestowed — you feel empowered!"* — followed
+by the mechanical summary. All visuals are vanilla Foundry (a glow tile
+under each token), so no extra modules are needed. Toggle with the
+**Celebration visuals** module setting.
+
+### Donation FX panel
+
+The toolbar's **Donation FX** button (or `HourlyXP.fxPanel()`) opens a
+panel with a one-click visual effect for **every item on the donation
+incentives list** — 19 total:
+
+- **Player ($5–$30):** Second Chance, Blessed Crit, Divine Swiftness,
+  Sigmar's Hand, Cheat Morr, Blessing of Sigmar
+- **Chaos ($10–$30):** GM Intrusion, Fumble Curse, Cruel Complication,
+  Whisper of Betrayal, Ruin the Plan (dark red/purple auras)
+- **Milestones ($250–$2,000):** Hidden Truth, Bonus Boss, Seize the Dice,
+  CHAOS HOUR, Chat Forges, DOUBLE XP, Fate Restored, Finale Wish
+
+Type a character name in the Target box to hit one character, or leave it
+blank for the whole party. Milestones are party-wide. Each effect plays
+its aura and posts a flavor proclamation in chat.
+
+The **$1,500 DOUBLE XP** milestone is functional: it doubles the per-tick
+grant for the next 4 real-time hours. The roster dashboard shows a
+`DOUBLE XP — 3h 12m left` badge while it's active, and
+`HourlyXP.status()` reports `xpMultiplier` / `doubleXpEndsInSeconds`.
+
+Or fire effects from a macro / the console (`F12`):
+
+```js
+HourlyXP.fx("crit", "Zelp");  // Blessed Crit on Zelp ($10)
+HourlyXP.fx("chaosHour");     // CHAOS HOUR, party-wide ($1,000)
+HourlyXP.fx("doubleXp");      // arm 4h double XP ($1,500)
+HourlyXP.fxList();            // all 19 keys, labels, prices
+```
+
 ### XP reasons and the system dialog
 
 Grants go through the WFRP4e system's native `awardExp`, so each grant
@@ -65,7 +106,7 @@ Or run these in a script macro or the console (`F12`):
 HourlyXP.start();      // start the timer
 HourlyXP.stop();       // stop the timer
 HourlyXP.grantNow();   // one manual grant right now
-HourlyXP.status();     // { running, ticks, nextTickInSeconds, sessionGranted, totalGranted }
+HourlyXP.status();     // { running, ticks, nextTickInSeconds, sessionGranted, totalGranted, xpMultiplier, doubleXpEndsInSeconds }
 HourlyXP.roster();     // open the character roster window
 ```
 
